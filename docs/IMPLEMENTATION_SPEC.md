@@ -879,11 +879,90 @@ This section does **not** yet decide whether PM Judgment itself is a single auth
 - Keeps scoring deterministic and testable.
 - Creates a portfolio-friendly scoring model that can explain why a player received a result instead of producing an opaque total.
 
+## 15. PM Judgment Dimensions
+
+### Decision
+
+PM Judgment uses three cross-scenario dimensions:
+
+```ts
+interface PMJudgmentContribution {
+  evidence?: number;
+  decision?: number;
+  execution?: number;
+}
+```
+
+The three dimensions represent different questions about the quality of a PM decision:
+
+- `evidence` — Did the player seek, recognize, and use the relevant information and uncertainty available at that time?
+- `decision` — Was the recommendation or trade-off itself reasonable given the evidence, objectives, risk, constraints, and authority available at that time?
+- `execution` — Was the decision carried forward with appropriate sequencing, governance, escalation, communication, and follow-through?
+
+A choice may therefore produce a mixed judgment profile rather than a single opaque score.
+
+Illustrative examples:
+
+```ts
+// Careful Boss recommendation
+{
+  evidence: 3,
+  decision: 2,
+  execution: 1
+}
+```
+
+```ts
+// Practical Shortcut: fast execution without enough assessment
+{
+  evidence: -2,
+  decision: 0,
+  execution: 2
+}
+```
+
+The numeric scale, dimension applicability rules, and final aggregation / normalization are intentionally not fixed by this decision and remain to be specified separately.
+
+### Separation from PMP profile
+
+PM Judgment dimensions and PMP-aligned learning domains are different layers and must remain separate.
+
+`evidence / decision / execution` answer:
+
+> How well did the player make and carry through this decision?
+
+`People / Process / Business Environment` answer:
+
+> Which PMP-aligned competency areas did this content exercise or reveal?
+
+A choice may therefore contribute to one or more PMP domains independently from whether its PM Judgment contribution is positive or negative.
+
+Do not use PMP domain coverage as a substitute for decision-quality scoring.
+
+### Outcome-bias guardrail
+
+The three Judgment dimensions must be evaluated against the information and authority reasonably available at the decision point, not against later Hidden Truth or final mission outcome.
+
+In particular:
+
+- a lucky outcome does not erase weak evidence discipline,
+- a bad outcome does not automatically invalidate a defensible decision,
+- fast execution may score positively on `execution` while the same choice scores negatively on `evidence`,
+- formal or process-heavy behavior is not automatically good Judgment if it does not improve the actual decision.
+
+### Why
+
+- Makes PM Judgment explainable rather than opaque.
+- Supports realistic mixed trade-offs such as the Firefighter pattern.
+- Allows Ending Review to identify specific strengths and weaknesses.
+- Keeps decision quality distinct from PMP content coverage.
+- Provides a reusable scoring language across future scenarios without tying Judgment to scenario-specific mechanics.
+
 ## Open Decisions
 
 - Final MVP Effect vocabulary and target identifiers
 - Initial MVP hidden-flag registry entries and defaults
-- PM Judgment contribution dimensions / scale
+- PM Judgment dimension applicability / scale / aggregation
 - Discovery / Reflection contribution representation
 - PMP tag / coverage representation
 - Event trigger / consequence rules
