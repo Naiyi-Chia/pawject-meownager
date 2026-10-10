@@ -475,11 +475,49 @@ Do not add free-form per-effect reveal scripting in MVP. If a latent consequence
 - Keeps player information intentionally incomplete while preserving deterministic simulation.
 - Avoids a premature before/after/reveal rules engine.
 
+## 9. Qualitative Meter Magnitude Thresholds
+
+### Decision
+
+MVP uses **one shared qualitative magnitude table across all five project meters**.
+
+The player-facing magnitude is derived from the absolute numeric delta:
+
+```text
+|Δ| = 0      → no displayed change
+|Δ| = 1–5    → slight
+|Δ| = 6–10   → moderate
+|Δ| ≥ 11     → significant
+```
+
+Direction is derived separately from the sign of the effect:
+
+```text
++8  → moderate increase
+-14 → significant decrease
+```
+
+The qualitative magnitude is therefore derived by the engine rather than authored independently in Event JSON.
+
+### Guardrail
+
+Do not allow normal scenario content to override the derived magnitude with a free-form field such as `displayMagnitude` in MVP.
+
+This prevents simulation truth and player-facing descriptions from drifting apart, such as a `-3` delta being manually labeled `significant`.
+
+If playtesting later shows that a specific meter needs materially different sensitivity, per-meter thresholds may be introduced as a future tuning layer. That change should be evidence-driven rather than pre-optimized now.
+
+### Why
+
+- All five meters already share a normalized 0–100 internal scale.
+- A common mapping is predictable, testable, and easy to balance.
+- Keeps content authoring simpler and reduces subjective magnitude labeling.
+- Preserves room for future per-meter tuning without making it an MVP requirement.
+
 ## Open Decisions
 
 - Final MVP Effect vocabulary and target identifiers
 - Initial MVP hidden-flag registry entries and defaults
-- Qualitative meter magnitude thresholds
 - Evidence representation
 - Scoring contribution representation
 - PMP tag / coverage representation
