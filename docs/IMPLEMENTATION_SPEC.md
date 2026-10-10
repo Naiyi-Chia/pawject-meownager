@@ -514,13 +514,13 @@ If playtesting later shows that a specific meter needs materially different sens
 - Keeps content authoring simpler and reduces subjective magnitude labeling.
 - Preserves room for future per-meter tuning without making it an MVP requirement.
 
-## 10. Evidence Definition vs Runtime Instance
+## 10. Evidence Definition and Runtime Instance
 
 ### Decision
 
-Use **static `EvidenceDefinition` authoring data plus runtime `EvidenceInstance` state**.
+Use **Static Evidence Definitions + Runtime Evidence Instances**.
 
-Evidence narrative/content data belongs to the scenario catalog. `GameState.evidence` stores only what happened to that evidence in the current run.
+Evidence content belongs to scenario authoring data, while discovery and lifecycle state belong to the current run.
 
 Illustrative static definition:
 
@@ -528,7 +528,7 @@ Illustrative static definition:
 interface EvidenceDefinition {
   id: string;
   title: string;
-  sourceType: EvidenceSourceType;
+  sourceType: string;
   sourceLabel: string;
   content: string;
   truthCompatibility?: string[];
@@ -543,63 +543,103 @@ interface EvidenceInstance {
   discoveredAt: string;
   status: EvidenceStatus;
 }
-
-interface EvidenceState {
-  items: EvidenceInstance[];
-}
 ```
 
-The exact `EvidenceStatus`, source-type enum, and Hidden Truth compatibility mechanism are defined by later decisions.
-
-### Ownership boundary
+### Responsibility split
 
 `EvidenceDefinition` answers:
 
-> What is this clue / document / observation?
-
-It may include authored properties such as title, source, text, and compatibility with scenario truth variants.
+- What is this evidence?
+- Who / what is its source?
+- What content should the player read?
+- Under which Hidden Truth configurations may it be available?
 
 `EvidenceInstance` answers:
 
-> What happened to this evidence in this run?
+- Has the player discovered it in this run?
+- When / through which progression point was it discovered?
+- What is its current lifecycle state on the Evidence Board?
 
-It may include runtime properties such as when it was discovered and whether it is currently active, outdated, or superseded.
+### GameState rule
 
-### Effect integration
+`GameState.evidence` stores runtime references / metadata, not duplicate full narrative content.
 
-A semantic effect such as:
+This allows the same evidence definition to be:
 
-```json
-{
-  "type": "evidence_add",
-  "evidenceId": "earth-science-report-01"
-}
-```
-
-should create or update the corresponding runtime instance by referencing a valid static definition. Event content must not duplicate the full evidence text into `GameState`.
-
-### Guardrails
-
-- Runtime state must reference a valid catalog `evidenceId`.
-- Static narrative content should not be copied into every run snapshot.
-- Discovery order / timestamp and lifecycle state belong to runtime state, not the static definition.
-- Evidence history should remain inspectable even when newer evidence supersedes older evidence; do not delete earlier clues merely because they are no longer current.
-- Hidden Truth compatibility is scenario authoring metadata, not a player-visible reliability score.
+- discovered at different moments in different runs,
+- absent in some runs,
+- superseded later,
+- selected conditionally based on Hidden Truth while keeping authored content centralized.
 
 ### Why
 
-- Keeps authored narrative data separate from per-run lifecycle state.
-- Avoids duplicating large text content inside `GameState`.
-- Supports different discovery timing and paths across runs.
-- Supports Evidence Board history and supersession without losing prior context.
-- Allows Hidden Truth variants to select consistent evidence pools while keeping run state small and deterministic.
-- Makes save/debug snapshots easier to inspect.
+- Separates static scenario content from mutable run state.
+- Keeps run snapshots smaller and easier to debug.
+- Supports deterministic Evidence Board testing.
+- Avoids duplicating narrative text into `GameState`.
+- Supports replay variation and Hidden Truth compatibility cleanly.
+
+## 11. Evidence Lifecycle
+
+### Decision
+
+MVP Evidence Instances use a three-state lifecycle plus an optional replacement relationship:
+
+```ts
+type EvidenceStatus = "current" | "outdated" | "superseded";
+
+interface EvidenceInstance {
+  evidenceId: string;
+  discoveredAt: string;
+  status: EvidenceStatus;
+  supersededBy?: string;
+}
+```
+
+Semantics:
+
+- `current` — the evidence remains relevant to the player's present decision context.
+- `outdated` — the evidence is older or no longer fully representative, but may still matter as historical context.
+- `superseded` — a newer evidence item has formally replaced it as the stronger basis for the same decision context.
+
+When `status` is `superseded`, `supersededBy` may reference the replacing `evidenceId`.
+
+Illustrative runtime state:
+
+```ts
+{
+  evidenceId: "launch-risk-report-v1",
+  discoveredAt: "boss-investigation-1",
+  status: "superseded",
+  supersededBy: "launch-risk-report-v2"
+}
+```
+
+### Evidence Board rule
+
+Superseded or outdated evidence is **not deleted from history**. The Evidence Board should preserve what the player knew at the time so conflicting, stale, and later-corrected information can remain inspectable.
+
+This is especially important for Fake Green and Boss judgment, where the quality of the player's decision is evaluated against the evidence available at that moment rather than hindsight.
+
+### MVP boundary
+
+Do not introduce a general evidence-relationship graph in MVP.
+
+Relationships such as `supports`, `contradicts`, or arbitrary graph edges remain Future options. Conflicting evidence can be presented side by side through authored content and board presentation without requiring a graph engine.
+
+### Why
+
+- Preserves the history of how a reasonable but outdated belief formed.
+- Distinguishes merely old information from information explicitly replaced by newer evidence.
+- Makes supersession inspectable without deleting evidence.
+- Supports evidence-at-the-time judgment and replay/debug analysis.
+- Provides enough structure for MVP without building a full evidence graph.
 
 ## Open Decisions
 
 - Final MVP Effect vocabulary and target identifiers
 - Initial MVP hidden-flag registry entries and defaults
-- Evidence lifecycle status vocabulary and source types
+- Evidence discovery source / timestamp representation
 - Scoring contribution representation
 - PMP tag / coverage representation
 - Event trigger / consequence rules
