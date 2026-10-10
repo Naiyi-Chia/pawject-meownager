@@ -15,7 +15,7 @@ for (const viewport of [
       if (message.type() === 'error') errors.push(message.text());
     });
     await page.setViewportSize(viewport);
-    await page.goto('/');
+    await page.goto('./');
     await expect(page).toHaveTitle('Pawject Meownager');
     await expect(page.getByRole('heading', { level: 1 })).toContainText(
       'Meownager',
@@ -51,7 +51,7 @@ test('the same Phaser canvas adapts from phone to desktop and back', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/');
+  await page.goto('./');
   await expect(page.getByRole('status')).toHaveText('Placeholder scene ready');
   const canvas = page.locator('canvas');
   const original = await canvas.elementHandle();
