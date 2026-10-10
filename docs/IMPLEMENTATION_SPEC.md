@@ -138,9 +138,76 @@ This is a **Future architecture option**, not an MVP requirement.
 - Keeping characters under `world` avoids premature abstraction for a small fixed cast.
 - The boundary remains easy to refactor later if NPC complexity materially increases.
 
+## 4. Event State Mutation Model
+
+### Decision
+
+MVP uses a **declarative Effect system**.
+
+Events and choices describe **what effect should happen**. They do not directly mutate `GameState` with event-specific code.
+
+Conceptual flow:
+
+```text
+Player Choice
+→ Effect[]
+→ Effect Resolver
+→ GameState
+```
+
+Illustrative event data:
+
+```json
+{
+  "effects": [
+    { "type": "meter_delta", "target": "morale", "value": -10 },
+    { "type": "set_flag", "key": "burnout", "value": true }
+  ]
+}
+```
+
+The exact allowed effect types, target identifiers, validation rules, and bounds are defined by later sections of this specification.
+
+### MVP guardrail
+
+Do **not** embed arbitrary JavaScript callbacks or custom executable handlers inside normal event content.
+
+Avoid event definitions such as:
+
+```ts
+onSelect: (state) => {
+  state.project.morale -= 10;
+  state.world.flags.burnout = true;
+}
+```
+
+All standard gameplay consequences should pass through a whitelisted, testable Effect Resolver.
+
+### Why
+
+- Keeps event content data-driven.
+- Makes event schemas validateable.
+- Supports deterministic unit tests and replay/debug traces.
+- Prevents product rules from leaking into UI components or one-off callbacks.
+- Makes later content authoring safer for both humans and agents.
+- Forces new behavior to become an explicit engine capability instead of hidden ad-hoc code.
+
+### Future hybrid option
+
+A hybrid model may be introduced later if a genuinely unique mechanic cannot be expressed through the declarative effect vocabulary.
+
+If introduced, custom handlers must be:
+
+- explicit,
+- whitelisted,
+- implemented in engine code rather than authored as arbitrary code inside JSON,
+- used only when extending the declarative model would be materially worse.
+
+This is a **Future architecture option**, not an MVP escape hatch.
+
 ## Open Decisions
 
-- Event state mutation model
+- Declarative Effect type vocabulary and target model
 - Hidden flag representation
 - Meter effect representation
 - Evidence representation
