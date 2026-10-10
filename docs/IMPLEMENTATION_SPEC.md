@@ -692,6 +692,92 @@ Real-world timestamps may be captured later in analytics / telemetry logs for se
 - Makes debug traces explainable: reviewers can see exactly which evidence existed before a specific decision.
 - Keeps analytics concerns separate from product-state semantics.
 
+## 13. Stable Semantic Event IDs
+
+### Decision
+
+Scenario Event IDs use a **semantic namespace plus stable sequence**.
+
+General form:
+
+```text
+S<scenario>-<namespace>-<sequence>
+```
+
+Examples for Scenario 01:
+
+```text
+S01-CORE-01
+S01-CORE-02
+S01-EXP-ENG-01
+S01-EXP-CAFE-01
+S01-REACT-01
+S01-BOSS-INV-01
+S01-BOSS-DEC-01
+```
+
+Namespaces should describe the event's authored role without encoding display copy. MVP may use namespaces such as:
+
+- `CORE` — main scenario progression
+- `EXP-<LOCATION>` — exploration events, such as `EXP-ENG`, `EXP-CAFE`, or `EXP-SUPPLY`
+- `REACT` — reactive world events
+- `LIGHT` — light / absurd events
+- `BOSS-INV` — Boss investigation actions / reveals
+- `BOSS-DEC` — Boss decision events
+
+Additional namespaces may be added only when a real scenario need exists.
+
+### Stability rule
+
+Event ID is **identity**, not display name and not the sole source of presentation order.
+
+Therefore:
+
+- renaming an event does not change its ID,
+- editing event copy does not change its ID,
+- moving an event in the authored sequence does not automatically change its ID,
+- inserting a new event does not trigger renumbering of existing IDs,
+- released / referenced IDs must remain stable once other content or telemetry depends on them.
+
+A sequence number may have gaps. Gaps are preferable to renumbering stable IDs.
+
+### Cross-reference role
+
+Stable Event IDs are canonical anchors that may be referenced by:
+
+- `EvidenceInstance.discoveredAtEventId`,
+- decision / run history,
+- trigger conditions,
+- consequence rules,
+- telemetry,
+- deterministic tests,
+- replay and debugging traces,
+- scoring cutoffs for evidence-at-the-time judgment.
+
+Example:
+
+```text
+evidence discovered at S01-BOSS-INV-02
+→ final decision at S01-BOSS-DEC-01
+→ evidence-at-decision set can be reconstructed deterministically
+```
+
+### Guardrails
+
+Do not derive Event IDs from mutable titles or localized strings.
+
+Do not use a single global counter such as `E001` without scenario / semantic context.
+
+Do not treat lexical ID order as the authoritative runtime sequence; explicit scenario progression / trigger data owns ordering and availability.
+
+### Why
+
+- Makes logs and telemetry readable without opening the event definition.
+- Gives Evidence, history, triggers, tests, and scoring a stable cross-reference key.
+- Prevents harmless narrative edits from breaking references.
+- Supports future scenarios naturally with `S02-*`, `S03-*`, and so on.
+- Keeps identity stable while allowing the scenario structure to evolve during iteration.
+
 ## Open Decisions
 
 - Final MVP Effect vocabulary and target identifiers
