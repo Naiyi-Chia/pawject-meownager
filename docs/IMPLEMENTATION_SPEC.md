@@ -367,11 +367,92 @@ Examples of data that should remain outside flags:
 - Improves telemetry consistency.
 - Keeps hidden-state semantics explicit and reviewable as product behavior.
 
+## 7. Meter Simulation and Player-Facing Visibility
+
+### Decision
+
+Use **precise internal simulation values** with **qualitative player-facing feedback**.
+
+The five visible project meters use numeric internal values so effects, scoring, tests, and balancing remain deterministic. The player-facing UI should not routinely expose exact deltas.
+
+MVP internal meter model:
+
+```text
+Range: 0–100
+Effect input: numeric delta
+Resolver behavior: clamp final value to 0–100
+```
+
+Illustrative authored effect:
+
+```json
+{
+  "type": "meter_delta",
+  "meter": "cat_morale",
+  "value": -12
+}
+```
+
+The player should normally see an approximate consequence such as:
+
+```text
+😼 Cat Morale ↓
+Significant morale pressure
+```
+
+rather than:
+
+```text
+Cat Morale -12
+```
+
+### Visibility is separate from simulation truth
+
+An effect's actual numeric impact and what the player is allowed to know are separate concerns.
+
+Normal consequences may be previewed qualitatively, while latent consequences may remain hidden.
+
+Illustrative contract direction:
+
+```json
+{
+  "type": "meter_delta",
+  "meter": "mission_budget",
+  "value": -8,
+  "visibility": "preview"
+}
+```
+
+```json
+{
+  "type": "meter_delta",
+  "meter": "mission_risk",
+  "value": 10,
+  "visibility": "hidden"
+}
+```
+
+The exact visibility enum and qualitative magnitude thresholds remain to be finalized.
+
+### Product rule
+
+**Simulation truth is precise; player-facing information may be intentionally approximate or incomplete.**
+
+This supports practical shortcuts and latent risk: a short-term attractive option must not be undermined by the UI revealing every hidden downstream cost in advance.
+
+### Why
+
+- Preserves deterministic simulation and balancing.
+- Prevents the game from becoming spreadsheet optimization.
+- Better reflects real PM decisions, where impacts are often directional rather than numerically certain.
+- Allows visible trade-offs without exposing hidden consequences.
+- Keeps scoring/test logic independent from presentation wording.
+
 ## Open Decisions
 
 - Final MVP Effect vocabulary and target identifiers
 - Initial MVP hidden-flag registry entries and defaults
-- Meter effect bounds / preview behavior
+- Exact meter visibility enum and qualitative magnitude thresholds
 - Evidence representation
 - Scoring contribution representation
 - PMP tag / coverage representation
