@@ -281,10 +281,96 @@ If an engineering-only migration/debug utility later requires a generic patch op
 - Prevents agents or content authors from mutating arbitrary runtime state.
 - Makes each Effect type represent an explicit product capability.
 
+## 6. Typed Hidden Flag Registry
+
+### Decision
+
+Hidden flags use a **typed registry** rather than unrestricted key-value pairs or an all-boolean map.
+
+Each hidden flag must be formally registered with:
+
+- a stable key,
+- an explicit value type,
+- allowed values or bounds where relevant,
+- a default value,
+- a short semantic description.
+
+Illustrative definitions:
+
+```ts
+type HiddenFlagDefinition =
+  | {
+      key: "burnout_pressure";
+      type: "boolean";
+      default: false;
+    }
+  | {
+      key: "speak_up_safety";
+      type: "enum";
+      values: ["low", "medium", "high"];
+      default: "medium";
+    }
+  | {
+      key: "baseline_alignment";
+      type: "enum";
+      values: ["aligned", "uncertain", "broken"];
+      default: "uncertain";
+    };
+```
+
+For MVP, supported value categories should stay intentionally small:
+
+- `boolean`
+- `enum`
+- bounded numeric values only when a genuine product need exists
+
+### Event usage
+
+Events may set only registered flags and only to values valid for that flag.
+
+```json
+{
+  "type": "flag_set",
+  "flag": "speak_up_safety",
+  "value": "low"
+}
+```
+
+Invalid examples include:
+
+```json
+{ "type": "flag_set", "flag": "speak_up_safety", "value": "bad" }
+```
+
+and any unknown / misspelled flag key.
+
+### Hidden flag boundary
+
+Hidden flags represent **discrete hidden world conditions** that influence reactive content, branching, consequences, or endings.
+
+Do not use the flag registry as a generic dumping ground for all runtime values.
+
+Examples of data that should remain outside flags:
+
+- character trust / relationships → structured data under `world`
+- Action Points / undo → `player`
+- visible project meters / status → `project`
+- Evidence Board state → `evidence`
+- scores / judgment / PMP profile → `scoring`
+
+### Why
+
+- Prevents mutually contradictory boolean flags from accidentally modeling a state machine.
+- Prevents free-form values such as `low`, `LOW`, `poor`, and `bad` from meaning the same thing inconsistently.
+- Supports strong TypeScript / JSON Schema validation and autocomplete.
+- Makes trigger rules safer and easier to inspect.
+- Improves telemetry consistency.
+- Keeps hidden-state semantics explicit and reviewable as product behavior.
+
 ## Open Decisions
 
 - Final MVP Effect vocabulary and target identifiers
-- Hidden flag representation
+- Initial MVP hidden-flag registry entries and defaults
 - Meter effect bounds / preview behavior
 - Evidence representation
 - Scoring contribution representation
