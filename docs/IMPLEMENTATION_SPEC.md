@@ -412,7 +412,37 @@ An effect's actual numeric impact and what the player is allowed to know are sep
 
 Normal consequences may be previewed qualitatively, while latent consequences may remain hidden.
 
-Illustrative contract direction:
+### Product rule
+
+**Simulation truth is precise; player-facing information may be intentionally approximate or incomplete.**
+
+This supports practical shortcuts and latent risk: a short-term attractive option must not be undermined by the UI revealing every hidden downstream cost in advance.
+
+### Why
+
+- Preserves deterministic simulation and balancing.
+- Prevents the game from becoming spreadsheet optimization.
+- Better reflects real PM decisions, where impacts are often directional rather than numerically certain.
+- Allows visible trade-offs without exposing hidden consequences.
+- Keeps scoring/test logic independent from presentation wording.
+
+## 8. Effect Visibility States
+
+### Decision
+
+MVP uses exactly three player-facing visibility states for authored effects:
+
+```ts
+type EffectVisibility = "preview" | "post_choice" | "latent";
+```
+
+Semantics:
+
+- `preview` — the player receives a qualitative indication before choosing; the consequence is also visible after resolution.
+- `post_choice` — the effect is not previewed before choosing, but its consequence is surfaced immediately after the choice resolves.
+- `latent` — the effect is neither previewed nor immediately revealed; it may surface later through dialogue, reactive events, evidence, crises, or ending logic.
+
+Illustrative effects:
 
 ```json
 {
@@ -428,31 +458,28 @@ Illustrative contract direction:
   "type": "meter_delta",
   "meter": "mission_risk",
   "value": 10,
-  "visibility": "hidden"
+  "visibility": "latent"
 }
 ```
 
-The exact visibility enum and qualitative magnitude thresholds remain to be finalized.
+### Guardrail
 
-### Product rule
+Visibility controls **information disclosure**, not whether the simulation effect is applied. A `latent` effect still updates the underlying `GameState` when resolved; it is simply withheld from immediate player feedback.
 
-**Simulation truth is precise; player-facing information may be intentionally approximate or incomplete.**
-
-This supports practical shortcuts and latent risk: a short-term attractive option must not be undermined by the UI revealing every hidden downstream cost in advance.
+Do not add free-form per-effect reveal scripting in MVP. If a latent consequence later becomes narratively visible, that should happen through normal Event / Trigger / Evidence content rather than bespoke visibility callbacks.
 
 ### Why
 
-- Preserves deterministic simulation and balancing.
-- Prevents the game from becoming spreadsheet optimization.
-- Better reflects real PM decisions, where impacts are often directional rather than numerically certain.
-- Allows visible trade-offs without exposing hidden consequences.
-- Keeps scoring/test logic independent from presentation wording.
+- Maps cleanly to anticipated trade-offs, discovered consequences, and hidden downstream risk.
+- Supports Practical Shortcut design without giving away every latent penalty.
+- Keeps player information intentionally incomplete while preserving deterministic simulation.
+- Avoids a premature before/after/reveal rules engine.
 
 ## Open Decisions
 
 - Final MVP Effect vocabulary and target identifiers
 - Initial MVP hidden-flag registry entries and defaults
-- Exact meter visibility enum and qualitative magnitude thresholds
+- Qualitative meter magnitude thresholds
 - Evidence representation
 - Scoring contribution representation
 - PMP tag / coverage representation
