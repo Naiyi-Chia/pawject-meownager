@@ -25,6 +25,20 @@ npm test
 
 Browser tests run against the production build, so run `npm run build` before `npm test`. On Linux, use `npx playwright install --with-deps chromium` for browser system dependencies. `npm run preview` serves the build locally; `npm run format` formats implementation files. CI runs lint, formatting, build, and Chromium checks.
 
+Vite uses the repository base path in development and production. For a local production preview, run `npm run build` then `npm run preview` and open `http://localhost:4173/pawject-meownager/`.
+
+## GitHub Pages deployment
+
+Production URL: <https://naiyi-chia.github.io/pawject-meownager/>.
+
+One-time repository setup: go to **Settings → Pages → Build and deployment → Source** and select **GitHub Actions**. The previous **Deploy from a branch / main / root** setting serves raw source and must be replaced. Ensure repository Actions are enabled and the `github-pages` environment permits deployment from `main`.
+
+After the normal review, integration, and release flow puts this fix on `main`, `.github/workflows/pages.yml` installs locked dependencies, runs the checks, builds the Vite app, uploads **only `dist/`**, and deploys it using the supported Pages Actions. Pushes to `main` trigger deployment; manual workflow runs also require the `main` branch. The existing foundation CI workflow remains in place for scoped work and PRs.
+
+After a successful deployment, repeat Production Smoke at the production URL: confirm the shell and Phaser placeholder are visible, including at a phone-sized viewport, and that script/style requests have no asset-path 404s. Local tests do not substitute for this check. Issue #1 remains open until Production Smoke passes.
+
+Deployment references: [Vite GitHub Pages guide](https://vite.dev/guide/static-deploy.html#github-pages) and [GitHub Pages workflow documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
+
 ## Foundation architecture
 
 - `src/ui/`: accessible HTML shell and responsive CSS.
