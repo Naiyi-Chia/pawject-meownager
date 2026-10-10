@@ -37,7 +37,6 @@ interface GameState {
 
 This decision defines **state ownership and shape strategy only**. It does not yet define:
 
-- exact child domains,
 - event contract,
 - mutation API,
 - meter semantics,
@@ -84,9 +83,63 @@ For MVP:
 - `MetaState` = cross-run local persistence.
 - No mid-run cloud save is required.
 
+## 3. Root GameState Domains
+
+### Decision
+
+MVP uses six first-level domains:
+
+```ts
+interface GameState {
+  run: RunState;
+  project: ProjectState;
+  world: WorldState;
+  player: PlayerState;
+  evidence: EvidenceState;
+  scoring: ScoringState;
+}
+```
+
+### Domain responsibilities
+
+- `run` — scenario identity, phase/progression, current event, run seed, decision/history references.
+- `project` — the five visible project meters and overall project status.
+- `world` — hidden world state, reactive flags, relationship/trust data, and other narrative consequences.
+- `player` — Action Points, undo usage, and other run-scoped player resources.
+- `evidence` — discovered clues and Evidence Board state.
+- `scoring` — Project Performance, PM Judgment, PMP-aligned accumulators, and other score inputs needed for ending evaluation.
+
+Exact child fields remain subject to later decisions.
+
+### Future character-domain rule
+
+For MVP, character trust / relationship data remains under `world` rather than creating a separate first-level `characters` domain.
+
+If future scenarios introduce sufficiently complex NPC state or behavior, the model may evolve to:
+
+```ts
+interface GameState {
+  run: RunState;
+  project: ProjectState;
+  world: WorldState;
+  characters: CharacterState;
+  player: PlayerState;
+  evidence: EvidenceState;
+  scoring: ScoringState;
+}
+```
+
+This is a **Future architecture option**, not an MVP requirement.
+
+### Why
+
+- Six domains are clear enough to prevent a monolithic state object.
+- They map to product concepts rather than implementation details.
+- Keeping characters under `world` avoids premature abstraction for a small fixed cast.
+- The boundary remains easy to refactor later if NPC complexity materially increases.
+
 ## Open Decisions
 
-- Exact `GameState` child domains
 - Event state mutation model
 - Hidden flag representation
 - Meter effect representation
