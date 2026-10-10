@@ -778,10 +778,112 @@ Do not treat lexical ID order as the authoritative runtime sequence; explicit sc
 - Supports future scenarios naturally with `S02-*`, `S03-*`, and so on.
 - Keeps identity stable while allowing the scenario structure to evolve during iteration.
 
+## 14. Structured Decision Scoring Contributions
+
+### Decision
+
+MVP uses **structured decision scoring contributions plus a centralized Scoring Engine** rather than direct ad-hoc score mutation inside gameplay effects.
+
+A choice may declare structured scoring inputs. When that choice is selected, the runtime records the decision and its scoring contribution for later aggregation.
+
+Illustrative authoring direction:
+
+```ts
+interface ScoringContribution {
+  projectPerformance?: number;
+  pmJudgment?: number;
+  discoveryReflection?: number;
+}
+```
+
+Illustrative decision history direction:
+
+```ts
+interface DecisionRecord {
+  eventId: string;
+  choiceId: string;
+  scoring: ScoringContribution;
+}
+```
+
+The exact contribution fields, scales, and validation bounds remain to be finalized in later scoring decisions.
+
+### Centralized scoring flow
+
+Conceptually:
+
+```text
+Player decisions / run state / outcome
+          ↓
+Structured scoring inputs
+          ↓
+Centralized Scoring Engine
+          ↓
+Project Performance
+PM Judgment
+Discovery / Reflection
+          ↓
+Total score + Performance × Judgment evaluation
+          ↓
+PM Style / ending inputs / PMP-aligned profile
+```
+
+The currently approved overall scoring model remains governed by `SCORING_AND_ENDINGS.md`; this section defines the implementation architecture for carrying scoring inputs, not a replacement scoring formula.
+
+### Source separation
+
+The three major score areas intentionally do not rely on the same source of truth:
+
+- **Project Performance** should be driven primarily by actual project state, mission outcome, and delivery consequences.
+- **PM Judgment** should be driven primarily by structured decision-quality contributions evaluated against what the player could reasonably know at the time.
+- **Discovery / Reflection** may be driven by structured exploration, evidence, investigation, and Lessons Learned inputs.
+
+This separation is required to preserve the locked rule:
+
+**Mission Outcome ≠ PM Judgment.**
+
+A decision may therefore improve short-term delivery while reducing PM Judgment, or vice versa.
+
+Example conceptual trade-off:
+
+```text
+Practical Shortcut
+Project Performance  +3
+PM Judgment          -4
+```
+
+The game must be able to represent this without forcing both axes to move in the same direction.
+
+### Outcome-bias guardrail
+
+Do not derive PM Judgment solely from final meters or final mission outcome.
+
+A lucky successful outcome must not retroactively convert a poorly supported decision into good judgment. Conversely, a prudent decision taken under uncertainty may retain strong PM Judgment even if later Hidden Truth or downstream events produce a worse mission result.
+
+Evidence-at-the-time scoring should use the progression / Evidence contracts defined earlier in this document.
+
+### Content-contract guardrail
+
+Do not use arbitrary `score_delta` effects as the default way to mutate aggregate score state from Event JSON.
+
+Scoring inputs should remain structured and inspectable so the result can later explain which decisions contributed to a player's style and profile.
+
+This section does **not** yet decide whether PM Judgment itself is a single authored number or a set of component dimensions. That remains an open design decision.
+
+### Why
+
+- Preserves the separation between delivery outcome and decision quality.
+- Supports Practical Shortcut trade-offs explicitly.
+- Avoids outcome bias in Boss and Hidden Truth evaluation.
+- Makes PM Style and result explanations traceable back to actual decisions.
+- Keeps scoring deterministic and testable.
+- Creates a portfolio-friendly scoring model that can explain why a player received a result instead of producing an opaque total.
+
 ## Open Decisions
 
 - Final MVP Effect vocabulary and target identifiers
 - Initial MVP hidden-flag registry entries and defaults
-- Scoring contribution representation
+- PM Judgment contribution dimensions / scale
+- Discovery / Reflection contribution representation
 - PMP tag / coverage representation
 - Event trigger / consequence rules
