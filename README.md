@@ -16,6 +16,7 @@ Start here:
 - [`docs/VISUAL_DIRECTION.md`](docs/VISUAL_DIRECTION.md) — visual system and mobile-first rules
 - [`docs/DECISION_LOG.md`](docs/DECISION_LOG.md) — why major product decisions were made
 - [`docs/FUTURE_BACKLOG.md`](docs/FUTURE_BACKLOG.md) — deliberately deferred ideas
+- [`docs/IMPLEMENTATION_SPEC.md`](docs/IMPLEMENTATION_SPEC.md) — implementation contracts currently being defined
 
 ## Working Scenario
 
