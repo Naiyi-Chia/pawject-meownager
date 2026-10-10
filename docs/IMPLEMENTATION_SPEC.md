@@ -514,11 +514,92 @@ If playtesting later shows that a specific meter needs materially different sens
 - Keeps content authoring simpler and reduces subjective magnitude labeling.
 - Preserves room for future per-meter tuning without making it an MVP requirement.
 
+## 10. Evidence Definition vs Runtime Instance
+
+### Decision
+
+Use **static `EvidenceDefinition` authoring data plus runtime `EvidenceInstance` state**.
+
+Evidence narrative/content data belongs to the scenario catalog. `GameState.evidence` stores only what happened to that evidence in the current run.
+
+Illustrative static definition:
+
+```ts
+interface EvidenceDefinition {
+  id: string;
+  title: string;
+  sourceType: EvidenceSourceType;
+  sourceLabel: string;
+  content: string;
+  truthCompatibility?: string[];
+}
+```
+
+Illustrative runtime instance:
+
+```ts
+interface EvidenceInstance {
+  evidenceId: string;
+  discoveredAt: string;
+  status: EvidenceStatus;
+}
+
+interface EvidenceState {
+  items: EvidenceInstance[];
+}
+```
+
+The exact `EvidenceStatus`, source-type enum, and Hidden Truth compatibility mechanism are defined by later decisions.
+
+### Ownership boundary
+
+`EvidenceDefinition` answers:
+
+> What is this clue / document / observation?
+
+It may include authored properties such as title, source, text, and compatibility with scenario truth variants.
+
+`EvidenceInstance` answers:
+
+> What happened to this evidence in this run?
+
+It may include runtime properties such as when it was discovered and whether it is currently active, outdated, or superseded.
+
+### Effect integration
+
+A semantic effect such as:
+
+```json
+{
+  "type": "evidence_add",
+  "evidenceId": "earth-science-report-01"
+}
+```
+
+should create or update the corresponding runtime instance by referencing a valid static definition. Event content must not duplicate the full evidence text into `GameState`.
+
+### Guardrails
+
+- Runtime state must reference a valid catalog `evidenceId`.
+- Static narrative content should not be copied into every run snapshot.
+- Discovery order / timestamp and lifecycle state belong to runtime state, not the static definition.
+- Evidence history should remain inspectable even when newer evidence supersedes older evidence; do not delete earlier clues merely because they are no longer current.
+- Hidden Truth compatibility is scenario authoring metadata, not a player-visible reliability score.
+
+### Why
+
+- Keeps authored narrative data separate from per-run lifecycle state.
+- Avoids duplicating large text content inside `GameState`.
+- Supports different discovery timing and paths across runs.
+- Supports Evidence Board history and supersession without losing prior context.
+- Allows Hidden Truth variants to select consistent evidence pools while keeping run state small and deterministic.
+- Makes save/debug snapshots easier to inspect.
+
 ## Open Decisions
 
 - Final MVP Effect vocabulary and target identifiers
 - Initial MVP hidden-flag registry entries and defaults
-- Evidence representation
+- Evidence lifecycle status vocabulary and source types
 - Scoring contribution representation
 - PMP tag / coverage representation
 - Event trigger / consequence rules
