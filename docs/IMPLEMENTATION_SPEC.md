@@ -540,8 +540,9 @@ Illustrative runtime instance:
 ```ts
 interface EvidenceInstance {
   evidenceId: string;
-  discoveredAt: string;
+  discoveredAtEventId: string;
   status: EvidenceStatus;
+  supersededBy?: string;
 }
 ```
 
@@ -557,7 +558,7 @@ interface EvidenceInstance {
 `EvidenceInstance` answers:
 
 - Has the player discovered it in this run?
-- When / through which progression point was it discovered?
+- At which Event / progression point was it discovered?
 - What is its current lifecycle state on the Evidence Board?
 
 ### GameState rule
@@ -590,7 +591,7 @@ type EvidenceStatus = "current" | "outdated" | "superseded";
 
 interface EvidenceInstance {
   evidenceId: string;
-  discoveredAt: string;
+  discoveredAtEventId: string;
   status: EvidenceStatus;
   supersededBy?: string;
 }
@@ -609,7 +610,7 @@ Illustrative runtime state:
 ```ts
 {
   evidenceId: "launch-risk-report-v1",
-  discoveredAt: "boss-investigation-1",
+  discoveredAtEventId: "S01-BOSS-INV-01",
   status: "superseded",
   supersededBy: "launch-risk-report-v2"
 }
@@ -635,11 +636,152 @@ Relationships such as `supports`, `contradicts`, or arbitrary graph edges remain
 - Supports evidence-at-the-time judgment and replay/debug analysis.
 - Provides enough structure for MVP without building a full evidence graph.
 
+## 12. Evidence Discovery Progression Marker
+
+### Decision
+
+Evidence discovery is anchored to **game progression**, not to a real-world timestamp.
+
+For MVP, `EvidenceInstance` stores the stable Event ID at which the evidence became available to the player:
+
+```ts
+interface EvidenceInstance {
+  evidenceId: string;
+  discoveredAtEventId: string;
+  status: EvidenceStatus;
+  supersededBy?: string;
+}
+```
+
+Examples:
+
+```ts
+{
+  evidenceId: "earth-science-report-01",
+  discoveredAtEventId: "S01-BOSS-INV-02",
+  status: "current"
+}
+```
+
+Exploration discoveries should likewise reference the corresponding exploration Event ID rather than introducing a second gameplay clock.
+
+### Judgment rule
+
+When a Decision Package or Boss decision is evaluated, the engine should determine which evidence had been discovered by that decision point and evaluate PM Judgment against that available set.
+
+Conceptually:
+
+```text
+Decision Event X
+→ determine evidence discovered before / at X
+→ evaluate judgment against that evidence set
+→ do not use later evidence as hindsight
+```
+
+This supports the locked product rule that **judgment quality is based on evidence available at the time**.
+
+### Telemetry boundary
+
+Real-world timestamps may be captured later in analytics / telemetry logs for session analysis, but they are not part of the gameplay Evidence contract and must not affect deterministic run logic.
+
+### Why
+
+- Directly supports evidence-at-the-time PM Judgment scoring.
+- Keeps replay and deterministic tests independent from wall-clock time.
+- Uses Scenario Event IDs as the canonical progression anchors instead of inventing a second time system.
+- Makes debug traces explainable: reviewers can see exactly which evidence existed before a specific decision.
+- Keeps analytics concerns separate from product-state semantics.
+
+## 13. Stable Semantic Event IDs
+
+### Decision
+
+Scenario Event IDs use a **semantic namespace plus stable sequence**.
+
+General form:
+
+```text
+S<scenario>-<namespace>-<sequence>
+```
+
+Examples for Scenario 01:
+
+```text
+S01-CORE-01
+S01-CORE-02
+S01-EXP-ENG-01
+S01-EXP-CAFE-01
+S01-REACT-01
+S01-BOSS-INV-01
+S01-BOSS-DEC-01
+```
+
+Namespaces should describe the event's authored role without encoding display copy. MVP may use namespaces such as:
+
+- `CORE` — main scenario progression
+- `EXP-<LOCATION>` — exploration events, such as `EXP-ENG`, `EXP-CAFE`, or `EXP-SUPPLY`
+- `REACT` — reactive world events
+- `LIGHT` — light / absurd events
+- `BOSS-INV` — Boss investigation actions / reveals
+- `BOSS-DEC` — Boss decision events
+
+Additional namespaces may be added only when a real scenario need exists.
+
+### Stability rule
+
+Event ID is **identity**, not display name and not the sole source of presentation order.
+
+Therefore:
+
+- renaming an event does not change its ID,
+- editing event copy does not change its ID,
+- moving an event in the authored sequence does not automatically change its ID,
+- inserting a new event does not trigger renumbering of existing IDs,
+- released / referenced IDs must remain stable once other content or telemetry depends on them.
+
+A sequence number may have gaps. Gaps are preferable to renumbering stable IDs.
+
+### Cross-reference role
+
+Stable Event IDs are canonical anchors that may be referenced by:
+
+- `EvidenceInstance.discoveredAtEventId`,
+- decision / run history,
+- trigger conditions,
+- consequence rules,
+- telemetry,
+- deterministic tests,
+- replay and debugging traces,
+- scoring cutoffs for evidence-at-the-time judgment.
+
+Example:
+
+```text
+evidence discovered at S01-BOSS-INV-02
+→ final decision at S01-BOSS-DEC-01
+→ evidence-at-decision set can be reconstructed deterministically
+```
+
+### Guardrails
+
+Do not derive Event IDs from mutable titles or localized strings.
+
+Do not use a single global counter such as `E001` without scenario / semantic context.
+
+Do not treat lexical ID order as the authoritative runtime sequence; explicit scenario progression / trigger data owns ordering and availability.
+
+### Why
+
+- Makes logs and telemetry readable without opening the event definition.
+- Gives Evidence, history, triggers, tests, and scoring a stable cross-reference key.
+- Prevents harmless narrative edits from breaking references.
+- Supports future scenarios naturally with `S02-*`, `S03-*`, and so on.
+- Keeps identity stable while allowing the scenario structure to evolve during iteration.
+
 ## Open Decisions
 
 - Final MVP Effect vocabulary and target identifiers
 - Initial MVP hidden-flag registry entries and defaults
-- Evidence discovery source / timestamp representation
 - Scoring contribution representation
 - PMP tag / coverage representation
 - Event trigger / consequence rules
