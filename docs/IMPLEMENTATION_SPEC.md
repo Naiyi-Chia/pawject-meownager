@@ -205,11 +205,87 @@ If introduced, custom handlers must be:
 
 This is a **Future architecture option**, not an MVP escape hatch.
 
+## 5. Semantic Typed Effects
+
+### Decision
+
+Scenario and Event content uses **semantic typed effects**, not arbitrary state-path mutation.
+
+Effects describe product meaning. The Effect Resolver owns the mapping from that meaning to the internal `GameState` structure.
+
+Illustrative examples:
+
+```json
+{ "type": "meter_delta", "meter": "cat_morale", "value": -10 }
+```
+
+```json
+{ "type": "flag_set", "flag": "burnout_pressure", "value": true }
+```
+
+```json
+{ "type": "ap_delta", "value": 1 }
+```
+
+```json
+{ "type": "evidence_add", "evidenceId": "earth-science-report-01" }
+```
+
+Conceptually, the engine may represent the union as:
+
+```ts
+type Effect =
+  | MeterDeltaEffect
+  | FlagSetEffect
+  | TrustDeltaEffect
+  | APDeltaEffect
+  | EvidenceAddEffect
+  | StatusSetEffect
+  | ScoreContributionEffect;
+```
+
+The list above is illustrative, not yet the final MVP vocabulary.
+
+### Content-contract guardrail
+
+Scenario/Event authors must not use generic paths such as:
+
+```json
+{
+  "type": "set",
+  "path": "world.flags.burnout",
+  "value": true
+}
+```
+
+or:
+
+```json
+{
+  "type": "delta",
+  "path": "project.meters.morale",
+  "value": -10
+}
+```
+
+Event content should not need to know internal `GameState` paths.
+
+If an engineering-only migration/debug utility later requires a generic patch operation, it may exist outside the scenario content contract. It must not become a normal authored Effect type.
+
+### Why
+
+- Decouples scenario content from internal state layout.
+- Makes JSON Schema / TypeScript validation stronger.
+- Allows the engine to centralize clamping, validation, logging, and telemetry.
+- Reduces refactor cost when state internals change.
+- Prevents agents or content authors from mutating arbitrary runtime state.
+- Makes each Effect type represent an explicit product capability.
+
 ## Open Decisions
 
-- Declarative Effect type vocabulary and target model
+- Final MVP Effect vocabulary and target identifiers
 - Hidden flag representation
-- Meter effect representation
+- Meter effect bounds / preview behavior
 - Evidence representation
 - Scoring contribution representation
 - PMP tag / coverage representation
