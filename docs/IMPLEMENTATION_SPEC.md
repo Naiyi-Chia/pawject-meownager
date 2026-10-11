@@ -1,18 +1,43 @@
 # Pawject Meownager — Implementation-Ready Specification
 
-Status: In progress
+Status: Contract baseline; event content and tuning remain in progress.
 
-This document translates the approved GDD into implementation contracts for Codex. Product behavior remains governed by the canonical design docs under `/docs`.
+This document translates the approved product design into implementation contracts for Codex. Product behavior remains governed by the canonical design docs under `/docs`.
 
-## 1. Game State Architecture
+If this document conflicts with the approved GDD, Scenario, Scoring, PMP Mapping, or Decision Log, the product document wins and this contract must be corrected before implementation continues.
 
-### Decision
+## 1. Decision Rights
 
-Use **one canonical Root `GameState` with modular child state domains**.
+This document may make technical representation decisions when they do not change player-facing product behavior.
 
-The engine should treat the root state as the authoritative snapshot for a single run, while keeping responsibilities separated internally.
+Technical representation includes:
 
-Illustrative shape only — field names and exact contracts are not yet final:
+- TypeScript / JSON data shapes,
+- registries and identifiers,
+- resolver boundaries,
+- validation rules,
+- deterministic aggregation mechanics,
+- separation of runtime and authored data.
+
+It must not independently change:
+
+- gameplay trade-offs,
+- hidden-state meaning,
+- scoring intent or PM Style meaning,
+- player information disclosure,
+- event branching outcomes,
+- PMP interpretation,
+- MVP scope.
+
+If a technical choice would change one of those product behaviors, stop and return to a product decision.
+
+---
+
+## 2. State Architecture
+
+### Canonical run state
+
+MVP uses one canonical root `GameState` with modular child domains:
 
 ```ts
 interface GameState {
@@ -25,213 +50,151 @@ interface GameState {
 }
 ```
 
-### Why
+Responsibilities:
 
-- Keeps save/load/debug snapshots straightforward.
-- Avoids a single flat object becoming unmanageable.
-- Supports deterministic event tests and replay reproduction.
-- Avoids premature complexity from independent system-owned state stores.
-- Leaves room for future systems without forcing them into UI components.
+- `run` — scenario identity, phase/progression, current event, run seed, decision/history references.
+- `project` — five visible project meters plus overall project status.
+- `world` — hidden flags, relationship/trust state, Hidden Truth, and narrative consequences.
+- `player` — Action Points, undo usage, and other run-scoped resources.
+- `evidence` — discovered Evidence instances and board lifecycle state.
+- `scoring` — decision-scoring records and derived result accumulators.
 
-### Guardrail
+For MVP, character relationship state stays under `world`; a separate first-level `characters` domain is Future architecture only.
 
-This decision defines **state ownership and shape strategy only**. It does not yet define:
+### Run state vs meta state
 
-- event contract,
-- mutation API,
-- meter semantics,
-- hidden-flag semantics,
-- scoring formulas,
-- PMP scoring logic.
+`GameState` is single-run state and resets on New Game.
 
-These remain open and must be specified before gameplay implementation relies on them.
-
-## 2. Run State vs Meta State
-
-### Decision
-
-Keep **single-run runtime state** and **cross-run persistent meta state** separate.
-
-`GameState` represents only the current run and is reset when a new run starts.
-
-`MetaState` represents data that persists across runs.
-
-Illustrative shape only:
+`MetaState` persists across runs:
 
 ```ts
 interface MetaState {
   playCount: number;
-  bestScore: number;
+  bestScore?: number;
   unlockedEndings: string[];
   discoveredEasterEggs: string[];
 }
 ```
 
-### Why
+MVP persistence boundary:
 
-- Run data and meta progression have different lifecycles.
-- New Game should reset `GameState` without erasing player history.
-- Deterministic run tests should not be polluted by previous runs.
-- MVP localStorage persistence can focus on `MetaState`.
-- Future settings / achievements can later introduce a higher-level `AppState` if needed without changing the run contract.
+- current run: runtime memory only,
+- cross-run meta: localStorage,
+- no cloud save,
+- no required mid-run save.
 
-### MVP persistence boundary
+---
+
+## 3. Stable IDs and Registries
+
+Authored content must reference stable semantic IDs rather than mutable display text or arbitrary object paths.
+
+### Event ID
+
+General format:
+
+```text
+S<scenario>-<namespace>-<sequence>
+```
+
+Examples:
+
+```text
+S01-CORE-01
+S01-EXP-CAFE-01
+S01-REACT-01
+S01-BOSS-INV-01
+S01-BOSS-DEC-01
+```
+
+MVP namespaces may include:
+
+- `CORE`
+- `EXP-<LOCATION>`
+- `REACT`
+- `LIGHT`
+- `BOSS-INV`
+- `BOSS-DEC`
+
+Event ID is identity, not presentation order. Renaming or moving an event must not automatically change its ID. Gaps are preferable to renumbering released IDs.
+
+### Meter IDs
+
+The five project meters use these stable IDs:
+
+```ts
+type MeterId =
+  | "schedule"
+  | "cost"
+  | "team"
+  | "risk"
+  | "stakeholder";
+```
+
+Player labels remain:
+
+- `schedule` → Launch Window
+- `cost` → Mission Budget
+- `team` → Cat Morale
+- `risk` → Mission Risk
+- `stakeholder` → Earth–Meow Trust
+
+Each meter definition owns its directionality so the engine never assumes that a larger number always means better:
+
+```ts
+interface MeterDefinition {
+  id: MeterId;
+  min: 0;
+  max: 100;
+  higherIsBetter: boolean;
+}
+```
 
 For MVP:
 
-- `GameState` = current-run snapshot / runtime state.
-- `MetaState` = cross-run local persistence.
-- No mid-run cloud save is required.
+- schedule / cost / team / stakeholder: `higherIsBetter = true`
+- risk: `higherIsBetter = false`
 
-## 3. Root GameState Domains
-
-### Decision
-
-MVP uses six first-level domains:
+### Project status
 
 ```ts
-interface GameState {
-  run: RunState;
-  project: ProjectState;
-  world: WorldState;
-  player: PlayerState;
-  evidence: EvidenceState;
-  scoring: ScoringState;
-}
+type ProjectStatus =
+  | "on_track"
+  | "at_risk"
+  | "critical"
+  | "uncertain";
 ```
 
-### Domain responsibilities
+Status is not a sixth meter and is never treated as spendable resource state.
 
-- `run` — scenario identity, phase/progression, current event, run seed, decision/history references.
-- `project` — the five visible project meters and overall project status.
-- `world` — hidden world state, reactive flags, relationship/trust data, and other narrative consequences.
-- `player` — Action Points, undo usage, and other run-scoped player resources.
-- `evidence` — discovered clues and Evidence Board state.
-- `scoring` — Project Performance, PM Judgment, PMP-aligned accumulators, and other score inputs needed for ending evaluation.
+### Other registries
 
-Exact child fields remain subject to later decisions.
+The engine must also maintain typed registries for:
 
-### Future character-domain rule
+- hidden flags,
+- relationships / trust targets,
+- Evidence definitions,
+- PMP skill tags.
 
-For MVP, character trust / relationship data remains under `world` rather than creating a separate first-level `characters` domain.
+Content may reference only registered IDs.
 
-If future scenarios introduce sufficiently complex NPC state or behavior, the model may evolve to:
+---
 
-```ts
-interface GameState {
-  run: RunState;
-  project: ProjectState;
-  world: WorldState;
-  characters: CharacterState;
-  player: PlayerState;
-  evidence: EvidenceState;
-  scoring: ScoringState;
-}
-```
+## 4. Declarative Effect System
 
-This is a **Future architecture option**, not an MVP requirement.
-
-### Why
-
-- Six domains are clear enough to prevent a monolithic state object.
-- They map to product concepts rather than implementation details.
-- Keeping characters under `world` avoids premature abstraction for a small fixed cast.
-- The boundary remains easy to refactor later if NPC complexity materially increases.
-
-## 4. Event State Mutation Model
-
-### Decision
-
-MVP uses a **declarative Effect system**.
-
-Events and choices describe **what effect should happen**. They do not directly mutate `GameState` with event-specific code.
-
-Conceptual flow:
+Events and choices describe **what consequence happens**. They do not directly mutate `GameState` with event-specific callbacks.
 
 ```text
-Player Choice
+Player action
 → Effect[]
 → Effect Resolver
 → GameState
+→ trigger evaluation
 ```
 
-Illustrative event data:
+Normal authored content must not contain arbitrary JavaScript handlers or generic state-path mutation.
 
-```json
-{
-  "effects": [
-    { "type": "meter_delta", "target": "morale", "value": -10 },
-    { "type": "set_flag", "key": "burnout", "value": true }
-  ]
-}
-```
-
-The exact allowed effect types, target identifiers, validation rules, and bounds are defined by later sections of this specification.
-
-### MVP guardrail
-
-Do **not** embed arbitrary JavaScript callbacks or custom executable handlers inside normal event content.
-
-Avoid event definitions such as:
-
-```ts
-onSelect: (state) => {
-  state.project.morale -= 10;
-  state.world.flags.burnout = true;
-}
-```
-
-All standard gameplay consequences should pass through a whitelisted, testable Effect Resolver.
-
-### Why
-
-- Keeps event content data-driven.
-- Makes event schemas validateable.
-- Supports deterministic unit tests and replay/debug traces.
-- Prevents product rules from leaking into UI components or one-off callbacks.
-- Makes later content authoring safer for both humans and agents.
-- Forces new behavior to become an explicit engine capability instead of hidden ad-hoc code.
-
-### Future hybrid option
-
-A hybrid model may be introduced later if a genuinely unique mechanic cannot be expressed through the declarative effect vocabulary.
-
-If introduced, custom handlers must be:
-
-- explicit,
-- whitelisted,
-- implemented in engine code rather than authored as arbitrary code inside JSON,
-- used only when extending the declarative model would be materially worse.
-
-This is a **Future architecture option**, not an MVP escape hatch.
-
-## 5. Semantic Typed Effects
-
-### Decision
-
-Scenario and Event content uses **semantic typed effects**, not arbitrary state-path mutation.
-
-Effects describe product meaning. The Effect Resolver owns the mapping from that meaning to the internal `GameState` structure.
-
-Illustrative examples:
-
-```json
-{ "type": "meter_delta", "meter": "cat_morale", "value": -10 }
-```
-
-```json
-{ "type": "flag_set", "flag": "burnout_pressure", "value": true }
-```
-
-```json
-{ "type": "ap_delta", "value": 1 }
-```
-
-```json
-{ "type": "evidence_add", "evidenceId": "earth-science-report-01" }
-```
-
-Conceptually, the engine may represent the union as:
+### Final MVP Effect vocabulary
 
 ```ts
 type Effect =
@@ -240,197 +203,109 @@ type Effect =
   | TrustDeltaEffect
   | APDeltaEffect
   | EvidenceAddEffect
-  | StatusSetEffect
-  | ScoreContributionEffect;
+  | EvidenceStatusSetEffect
+  | ProjectStatusSetEffect;
 ```
 
-The list above is illustrative, not yet the final MVP vocabulary.
-
-### Content-contract guardrail
-
-Scenario/Event authors must not use generic paths such as:
-
-```json
-{
-  "type": "set",
-  "path": "world.flags.burnout",
-  "value": true
-}
-```
-
-or:
-
-```json
-{
-  "type": "delta",
-  "path": "project.meters.morale",
-  "value": -10
-}
-```
-
-Event content should not need to know internal `GameState` paths.
-
-If an engineering-only migration/debug utility later requires a generic patch operation, it may exist outside the scenario content contract. It must not become a normal authored Effect type.
-
-### Why
-
-- Decouples scenario content from internal state layout.
-- Makes JSON Schema / TypeScript validation stronger.
-- Allows the engine to centralize clamping, validation, logging, and telemetry.
-- Reduces refactor cost when state internals change.
-- Prevents agents or content authors from mutating arbitrary runtime state.
-- Makes each Effect type represent an explicit product capability.
-
-## 6. Typed Hidden Flag Registry
-
-### Decision
-
-Hidden flags use a **typed registry** rather than unrestricted key-value pairs or an all-boolean map.
-
-Each hidden flag must be formally registered with:
-
-- a stable key,
-- an explicit value type,
-- allowed values or bounds where relevant,
-- a default value,
-- a short semantic description.
-
-Illustrative definitions:
+#### `meter_delta`
 
 ```ts
-type HiddenFlagDefinition =
-  | {
-      key: "burnout_pressure";
-      type: "boolean";
-      default: false;
-    }
-  | {
-      key: "speak_up_safety";
-      type: "enum";
-      values: ["low", "medium", "high"];
-      default: "medium";
-    }
-  | {
-      key: "baseline_alignment";
-      type: "enum";
-      values: ["aligned", "uncertain", "broken"];
-      default: "uncertain";
-    };
-```
-
-For MVP, supported value categories should stay intentionally small:
-
-- `boolean`
-- `enum`
-- bounded numeric values only when a genuine product need exists
-
-### Event usage
-
-Events may set only registered flags and only to values valid for that flag.
-
-```json
-{
-  "type": "flag_set",
-  "flag": "speak_up_safety",
-  "value": "low"
+interface MeterDeltaEffect {
+  type: "meter_delta";
+  meter: MeterId;
+  value: number;
+  visibility: EffectVisibility;
 }
 ```
 
-Invalid examples include:
+Resolver clamps final meter values to 0–100.
 
-```json
-{ "type": "flag_set", "flag": "speak_up_safety", "value": "bad" }
-```
+#### `flag_set`
 
-and any unknown / misspelled flag key.
-
-### Hidden flag boundary
-
-Hidden flags represent **discrete hidden world conditions** that influence reactive content, branching, consequences, or endings.
-
-Do not use the flag registry as a generic dumping ground for all runtime values.
-
-Examples of data that should remain outside flags:
-
-- character trust / relationships → structured data under `world`
-- Action Points / undo → `player`
-- visible project meters / status → `project`
-- Evidence Board state → `evidence`
-- scores / judgment / PMP profile → `scoring`
-
-### Why
-
-- Prevents mutually contradictory boolean flags from accidentally modeling a state machine.
-- Prevents free-form values such as `low`, `LOW`, `poor`, and `bad` from meaning the same thing inconsistently.
-- Supports strong TypeScript / JSON Schema validation and autocomplete.
-- Makes trigger rules safer and easier to inspect.
-- Improves telemetry consistency.
-- Keeps hidden-state semantics explicit and reviewable as product behavior.
-
-## 7. Meter Simulation and Player-Facing Visibility
-
-### Decision
-
-Use **precise internal simulation values** with **qualitative player-facing feedback**.
-
-The five visible project meters use numeric internal values so effects, scoring, tests, and balancing remain deterministic. The player-facing UI should not routinely expose exact deltas.
-
-MVP internal meter model:
-
-```text
-Range: 0–100
-Effect input: numeric delta
-Resolver behavior: clamp final value to 0–100
-```
-
-Illustrative authored effect:
-
-```json
-{
-  "type": "meter_delta",
-  "meter": "cat_morale",
-  "value": -12
+```ts
+interface FlagSetEffect<K extends HiddenFlagKey = HiddenFlagKey> {
+  type: "flag_set";
+  flag: K;
+  value: HiddenFlagValue<K>;
 }
 ```
 
-The player should normally see an approximate consequence such as:
+Flag changes do not directly render player-facing feedback. Their consequences become visible through normal narrative, meter, status, Evidence, or reactive Event content.
 
-```text
-😼 Cat Morale ↓
-Significant morale pressure
+#### `trust_delta`
+
+```ts
+interface TrustDeltaEffect {
+  type: "trust_delta";
+  relationshipId: RelationshipId;
+  value: number;
+  visibility: EffectVisibility;
+}
 ```
 
-rather than:
+Bounds belong to the relationship definition rather than a universal trust scale.
 
-```text
-Cat Morale -12
+#### `ap_delta`
+
+```ts
+interface APDeltaEffect {
+  type: "ap_delta";
+  value: number;
+}
 ```
 
-### Visibility is separate from simulation truth
+AP resolver enforces the approved phase gain and bank-cap rules.
 
-An effect's actual numeric impact and what the player is allowed to know are separate concerns.
+#### `evidence_add`
 
-Normal consequences may be previewed qualitatively, while latent consequences may remain hidden.
+```ts
+interface EvidenceAddEffect {
+  type: "evidence_add";
+  evidenceId: EvidenceId;
+}
+```
 
-### Product rule
+Discovery records the current Event ID as `discoveredAtEventId`.
 
-**Simulation truth is precise; player-facing information may be intentionally approximate or incomplete.**
+#### `evidence_status_set`
 
-This supports practical shortcuts and latent risk: a short-term attractive option must not be undermined by the UI revealing every hidden downstream cost in advance.
+```ts
+interface EvidenceStatusSetEffect {
+  type: "evidence_status_set";
+  evidenceId: EvidenceId;
+  status: EvidenceStatus;
+  supersededBy?: EvidenceId;
+}
+```
 
-### Why
+`supersededBy` is valid only when status is `superseded`.
 
-- Preserves deterministic simulation and balancing.
-- Prevents the game from becoming spreadsheet optimization.
-- Better reflects real PM decisions, where impacts are often directional rather than numerically certain.
-- Allows visible trade-offs without exposing hidden consequences.
-- Keeps scoring/test logic independent from presentation wording.
+#### `project_status_set`
 
-## 8. Effect Visibility States
+```ts
+interface ProjectStatusSetEffect {
+  type: "project_status_set";
+  status: ProjectStatus;
+  visibility: EffectVisibility;
+}
+```
 
-### Decision
+### Explicit non-effects
 
-MVP uses exactly three player-facing visibility states for authored effects:
+The following do **not** belong in the normal Effect union:
+
+- scoring contributions,
+- PMP tags,
+- event progression / ordering,
+- Hidden Truth selection,
+- arbitrary `set(path, value)`,
+- arbitrary `delta(path, value)`.
+
+Scoring and learning metadata are recorded separately from state mutation.
+
+---
+
+## 5. Effect Visibility and Player Feedback
 
 ```ts
 type EffectVisibility = "preview" | "post_choice" | "latent";
@@ -438,50 +313,15 @@ type EffectVisibility = "preview" | "post_choice" | "latent";
 
 Semantics:
 
-- `preview` — the player receives a qualitative indication before choosing; the consequence is also visible after resolution.
-- `post_choice` — the effect is not previewed before choosing, but its consequence is surfaced immediately after the choice resolves.
-- `latent` — the effect is neither previewed nor immediately revealed; it may surface later through dialogue, reactive events, evidence, crises, or ending logic.
+- `preview` — qualitative effect is visible before choosing and remains visible after resolution.
+- `post_choice` — not shown before choosing; surfaced after resolution.
+- `latent` — neither previewed nor immediately revealed; may surface later through normal content.
 
-Illustrative effects:
+Visibility controls information disclosure, not whether the underlying state change applies.
 
-```json
-{
-  "type": "meter_delta",
-  "meter": "mission_budget",
-  "value": -8,
-  "visibility": "preview"
-}
-```
+### Meter magnitude mapping
 
-```json
-{
-  "type": "meter_delta",
-  "meter": "mission_risk",
-  "value": 10,
-  "visibility": "latent"
-}
-```
-
-### Guardrail
-
-Visibility controls **information disclosure**, not whether the simulation effect is applied. A `latent` effect still updates the underlying `GameState` when resolved; it is simply withheld from immediate player feedback.
-
-Do not add free-form per-effect reveal scripting in MVP. If a latent consequence later becomes narratively visible, that should happen through normal Event / Trigger / Evidence content rather than bespoke visibility callbacks.
-
-### Why
-
-- Maps cleanly to anticipated trade-offs, discovered consequences, and hidden downstream risk.
-- Supports Practical Shortcut design without giving away every latent penalty.
-- Keeps player information intentionally incomplete while preserving deterministic simulation.
-- Avoids a premature before/after/reveal rules engine.
-
-## 9. Qualitative Meter Magnitude Thresholds
-
-### Decision
-
-MVP uses **one shared qualitative magnitude table across all five project meters**.
-
-The player-facing magnitude is derived from the absolute numeric delta:
+MVP derives qualitative magnitude from absolute delta:
 
 ```text
 |Δ| = 0      → no displayed change
@@ -490,479 +330,652 @@ The player-facing magnitude is derived from the absolute numeric delta:
 |Δ| ≥ 11     → significant
 ```
 
-Direction is derived separately from the sign of the effect:
+Direction is derived separately from the sign and the meter definition's `higherIsBetter` metadata.
 
-```text
-+8  → moderate increase
--14 → significant decrease
+Normal Event JSON must not override this with hand-authored magnitude labels.
+
+Product rule:
+
+> Simulation truth is precise; player-facing information may be intentionally approximate or incomplete.
+
+---
+
+## 6. Hidden Flag Registry
+
+Hidden flags use typed definitions, not an unrestricted dictionary.
+
+```ts
+type HiddenFlagDefinition =
+  | BooleanFlagDefinition
+  | EnumFlagDefinition
+  | BoundedNumberFlagDefinition;
 ```
 
-The qualitative magnitude is therefore derived by the engine rather than authored independently in Event JSON.
+Each definition requires:
 
-### Guardrail
+- stable key,
+- value type,
+- allowed values or bounds,
+- default value,
+- short semantic description.
 
-Do not allow normal scenario content to override the derived magnitude with a free-form field such as `displayMagnitude` in MVP.
+MVP should prefer `boolean` and `enum`; bounded numbers require a genuine scenario need.
 
-This prevents simulation truth and player-facing descriptions from drifting apart, such as a `-3` delta being manually labeled `significant`.
+Hidden flags model discrete hidden world conditions only. Do not store meters, AP, Evidence instances, relationships, or score state in this registry.
 
-If playtesting later shows that a specific meter needs materially different sensitivity, per-meter thresholds may be introduced as a future tuning layer. That change should be evidence-driven rather than pre-optimized now.
+### Scenario 01 initial registry baseline
 
-### Why
+Only flags supported by already-approved Scenario 01 facts are locked at this stage:
 
-- All five meters already share a normalized 0–100 internal scale.
-- A common mapping is predictable, testable, and easy to balance.
-- Keeps content authoring simpler and reduces subjective magnitude labeling.
-- Preserves room for future per-meter tuning without making it an MVP requirement.
+```ts
+interface Scenario01HiddenFlags {
+  information_integrity: "healthy" | "degraded" | "distorted";
+  speak_up_safety: "low" | "medium" | "high";
+  overtime_pressure: "low" | "medium" | "high";
+  baseline_alignment: "aligned" | "uncertain" | "misaligned";
+}
+```
 
-## 10. Evidence Definition and Runtime Instance
+Initial values:
 
-### Decision
+```ts
+const scenario01InitialHiddenFlags: Scenario01HiddenFlags = {
+  information_integrity: "degraded",
+  speak_up_safety: "low",
+  overtime_pressure: "high",
+  baseline_alignment: "misaligned",
+};
+```
 
-Use **Static Evidence Definitions + Runtime Evidence Instances**.
+These values encode already-approved story facts: the dashboard is stale / misleading, Engineering has been in sustained overtime, people are afraid to surface bad news, and the working baseline is not actually aligned.
 
-Evidence content belongs to scenario authoring data, while discovery and lifecycle state belong to the current run.
+GDD examples such as `supplier_pressure`, `scope_creep`, `technical_debt`, `media_attention`, and `governance_readiness` are **not automatically MVP registry entries**. Add one only when authored Scenario 01 content actually needs it.
 
-Illustrative static definition:
+Hidden Truth remains separate from the generic flag registry because it is a scenario-level run configuration selected at run start.
+
+---
+
+## 7. Evidence Contract
+
+Use Static Evidence Definitions + Runtime Evidence Instances.
 
 ```ts
 interface EvidenceDefinition {
-  id: string;
+  id: EvidenceId;
   title: string;
   sourceType: string;
   sourceLabel: string;
   content: string;
-  truthCompatibility?: string[];
+  truthCompatibility?: HiddenTruthId[];
 }
 ```
-
-Illustrative runtime instance:
-
-```ts
-interface EvidenceInstance {
-  evidenceId: string;
-  discoveredAtEventId: string;
-  status: EvidenceStatus;
-  supersededBy?: string;
-}
-```
-
-### Responsibility split
-
-`EvidenceDefinition` answers:
-
-- What is this evidence?
-- Who / what is its source?
-- What content should the player read?
-- Under which Hidden Truth configurations may it be available?
-
-`EvidenceInstance` answers:
-
-- Has the player discovered it in this run?
-- At which Event / progression point was it discovered?
-- What is its current lifecycle state on the Evidence Board?
-
-### GameState rule
-
-`GameState.evidence` stores runtime references / metadata, not duplicate full narrative content.
-
-This allows the same evidence definition to be:
-
-- discovered at different moments in different runs,
-- absent in some runs,
-- superseded later,
-- selected conditionally based on Hidden Truth while keeping authored content centralized.
-
-### Why
-
-- Separates static scenario content from mutable run state.
-- Keeps run snapshots smaller and easier to debug.
-- Supports deterministic Evidence Board testing.
-- Avoids duplicating narrative text into `GameState`.
-- Supports replay variation and Hidden Truth compatibility cleanly.
-
-## 11. Evidence Lifecycle
-
-### Decision
-
-MVP Evidence Instances use a three-state lifecycle plus an optional replacement relationship:
 
 ```ts
 type EvidenceStatus = "current" | "outdated" | "superseded";
 
 interface EvidenceInstance {
-  evidenceId: string;
-  discoveredAtEventId: string;
+  evidenceId: EvidenceId;
+  discoveredAtEventId: EventId;
   status: EvidenceStatus;
-  supersededBy?: string;
+  supersededBy?: EvidenceId;
 }
 ```
 
-Semantics:
+Rules:
 
-- `current` — the evidence remains relevant to the player's present decision context.
-- `outdated` — the evidence is older or no longer fully representative, but may still matter as historical context.
-- `superseded` — a newer evidence item has formally replaced it as the stronger basis for the same decision context.
+- static narrative content stays in Evidence definitions,
+- `GameState.evidence` stores runtime references / lifecycle metadata,
+- outdated or superseded Evidence remains visible in history,
+- no general Evidence relationship graph in MVP,
+- `supports` / `contradicts` edges are Future scope,
+- real-world timestamps may exist in analytics later but never affect deterministic gameplay.
 
-When `status` is `superseded`, `supersededBy` may reference the replacing `evidenceId`.
+### Evidence-at-the-time judgment
 
-Illustrative runtime state:
+For a scored decision at Event X:
+
+```text
+Decision Event X
+→ reconstruct Evidence discovered before / at X
+→ evaluate Judgment against that Evidence set
+→ exclude later Evidence from that decision's Judgment evaluation
+```
+
+This is required for Boss evaluation and Fake Green reasoning.
+
+---
+
+## 8. Structured Decision History
+
+Every scored player decision produces a durable run-history record.
 
 ```ts
-{
-  evidenceId: "launch-risk-report-v1",
-  discoveredAtEventId: "S01-BOSS-INV-01",
-  status: "superseded",
-  supersededBy: "launch-risk-report-v2"
+interface DecisionRecord {
+  eventId: EventId;
+  interactionId: string;
+  selection: DecisionSelection;
+  availableEvidenceIds: EvidenceId[];
+  judgment?: PMJudgmentContribution;
+  discoveryReflection?: DiscoveryReflectionContribution[];
+  pmpTags?: PmpTagSet;
 }
 ```
 
-### Evidence Board rule
+The history record exists so replay/debug/result explanation can reconstruct:
 
-Superseded or outdated evidence is **not deleted from history**. The Evidence Board should preserve what the player knew at the time so conflicting, stale, and later-corrected information can remain inspectable.
+- what the player selected,
+- what Evidence existed then,
+- what Judgment dimensions applied,
+- which learning domains were observed.
 
-This is especially important for Fake Green and Boss judgment, where the quality of the player's decision is evaluated against the evidence available at that moment rather than hindsight.
+Final score state must remain derivable from deterministic run history + final project/world state rather than opaque incremental mutations.
 
-### MVP boundary
+---
 
-Do not introduce a general evidence-relationship graph in MVP.
+## 9. Scoring Architecture
 
-Relationships such as `supports`, `contradicts`, or arbitrary graph edges remain Future options. Conflicting evidence can be presented side by side through authored content and board presentation without requiring a graph engine.
+### Source separation
 
-### Why
+The major score areas intentionally use different source data:
 
-- Preserves the history of how a reasonable but outdated belief formed.
-- Distinguishes merely old information from information explicitly replaced by newer evidence.
-- Makes supersession inspectable without deleting evidence.
-- Supports evidence-at-the-time judgment and replay/debug analysis.
-- Provides enough structure for MVP without building a full evidence graph.
+- **Project Performance** — derived primarily from actual final project/world state, mission outcome, residual risk, unresolved issues, and delivery consequences.
+- **PM Judgment** — derived from structured decision-quality contributions evaluated using information and authority available at that decision point.
+- **Discovery / Reflection** — derived from structured exploration, Evidence, investigation, and Lessons Learned contributions.
 
-## 12. Evidence Discovery Progression Marker
+This separation enforces:
 
-### Decision
+> Mission Outcome ≠ PM Judgment.
 
-Evidence discovery is anchored to **game progression**, not to a real-world timestamp.
+Normal Event content must not mutate aggregate score using a generic `score_delta` Effect.
 
-For MVP, `EvidenceInstance` stores the stable Event ID at which the evidence became available to the player:
+### Project Performance
+
+Project Performance should be computed by a centralized Scoring Engine from actual state. Short-term Practical Shortcut benefits should normally appear through project/world Effects rather than a parallel hand-authored Performance score.
+
+Exact production weights and PM Style thresholds remain tuning values to calibrate through playtesting.
+
+---
+
+## 10. PM Judgment Dimensions
+
+PM Judgment uses three reusable dimensions:
 
 ```ts
-interface EvidenceInstance {
-  evidenceId: string;
-  discoveredAtEventId: string;
-  status: EvidenceStatus;
-  supersededBy?: string;
+type PMJudgmentDimension =
+  | "evidence"
+  | "decision"
+  | "execution";
+```
+
+Meaning:
+
+- `evidence` — Did the player seek, recognize, and use relevant information / uncertainty available at the time?
+- `decision` — Was the recommendation / trade-off reasonable given evidence, objectives, constraints, risk, and authority?
+- `execution` — Was it carried forward with appropriate sequencing, ownership, governance, escalation, communication, and follow-through?
+
+### Authored contribution scale
+
+Use a small ordinal scale to avoid false precision:
+
+```ts
+type JudgmentRating = -2 | -1 | 0 | 1 | 2;
+```
+
+Semantic meaning:
+
+- `-2` — materially harmful / strongly unsound
+- `-1` — weak / incomplete
+- `0` — mixed or genuinely neutral
+- `1` — sound
+- `2` — especially strong for the decision context
+
+### Applicability rule
+
+A missing dimension means **not evaluated by this decision**.
+
+A value of `0` means **evaluated and neutral / mixed**.
+
+These are not interchangeable.
+
+```ts
+interface PMJudgmentContribution {
+  evidence?: JudgmentRating;
+  decision?: JudgmentRating;
+  execution?: JudgmentRating;
 }
+```
+
+This prevents an event about stakeholder execution from silently lowering `evidence` merely because Evidence was not relevant.
+
+### Aggregation rule
+
+The Scoring Engine aggregates only applicable ratings.
+
+Architecture:
+
+```text
+authored ordinal ratings
+→ aggregate applicable observations by dimension
+→ normalize each dimension to 0–100
+→ combine dimension scores using centralized config
+→ PM Judgment 0–100
+```
+
+Dimension weights, minimum-observation rules, and final normalization constants live in one scoring configuration module, not inside Event JSON.
+
+Initial tuning may use equal dimension weights; production weights remain playtest-adjustable without changing Event content.
+
+Outcome, Hidden Truth, and later Evidence must never retroactively rewrite a prior Judgment contribution.
+
+---
+
+## 11. Discovery / Reflection Contributions
+
+Discovery / Reflection is a smaller auxiliary score category and must not reward clicking everything indiscriminately.
+
+```ts
+type DiscoveryReflectionKind =
+  | "exploration"
+  | "evidence"
+  | "investigation"
+  | "reflection";
+
+type DiscoveryReflectionRating = -1 | 0 | 1;
+
+interface DiscoveryReflectionContribution {
+  kind: DiscoveryReflectionKind;
+  rating: DiscoveryReflectionRating;
+  key: string;
+}
+```
+
+Rules:
+
+- `1` = meaningful / useful contribution,
+- `0` = neutral, flavor-only, or no strategic learning value,
+- `-1` = materially poor reflection where the interaction explicitly evaluates learning quality,
+- pure Easter eggs should normally record `0` or no contribution,
+- repeated discovery of the same contribution key must not double-count,
+- Lessons Learned may contribute but remains a small part of overall Judgment / reflection output as defined by product scoring docs.
+
+Final weighting relative to Project Performance and PM Judgment remains centralized scoring configuration and tuning, not per-event arithmetic.
+
+---
+
+## 12. PMP Tags and Coverage
+
+PMP-aligned profile is a learning-observation layer, not a substitute for PM Judgment and not an official PMP score.
+
+```ts
+type PmpDomain =
+  | "people"
+  | "process"
+  | "business_environment";
+```
+
+### Skill registry
+
+MVP skill IDs are drawn from `PMP_MAPPING.md`:
+
+```ts
+type PmpSkillId =
+  | "team_leadership"
+  | "psychological_safety"
+  | "conflict"
+  | "stakeholder_engagement"
+  | "communication"
+  | "schedule"
+  | "cost"
+  | "requirements"
+  | "baseline"
+  | "change"
+  | "risk"
+  | "procurement"
+  | "quality"
+  | "evidence"
+  | "issue_management"
+  | "governance"
+  | "compliance"
+  | "value"
+  | "sustainability"
+  | "external_impact"
+  | "escalation";
+```
+
+Each skill registry entry maps to exactly one PMP domain for coverage reporting. An Event / choice may reference multiple skills and therefore multiple domains.
+
+```ts
+interface PmpTagSet {
+  skills: PmpSkillId[];
+}
+```
+
+### Runtime observation
+
+When a scored decision occurs, record which tagged skills were actually observed in that decision.
+
+```ts
+interface PmpObservation {
+  eventId: EventId;
+  choiceId: string;
+  skills: PmpSkillId[];
+  judgmentQuality?: number;
+}
+```
+
+`judgmentQuality` is derived from the decision's applicable PM Judgment contribution; do not hand-author a second independent PMP proficiency score for the same choice.
+
+### Domain accumulator
+
+For each domain, retain enough information to derive:
+
+- quality score,
+- relevant decision count,
+- observed skill coverage,
+- confidence / coverage tier.
+
+Conceptually:
+
+```ts
+interface PmpDomainAccumulator {
+  relevantDecisionIds: string[];
+  observedSkills: PmpSkillId[];
+  qualitySum: number;
+  qualityWeight: number;
+}
+```
+
+Coverage is about **how much evidence exists**, not how good the score is.
+
+Do not use the official PMP exam domain percentages as player proficiency weights. They describe exam composition only.
+
+Ending UI exposes only the three playful domains by default; detailed skill tags remain one level deeper.
+
+Exact low / medium / high coverage thresholds remain centralized tuning constants so playtesting can calibrate them without rewriting Event content.
+
+---
+
+## 13. Declarative Trigger / Consequence Rules
+
+Event availability and reactive consequences use a deterministic declarative condition system.
+
+Normal content must not contain arbitrary predicate functions.
+
+### Condition primitives
+
+MVP supports:
+
+```ts
+type TriggerCondition =
+  | FlagEqualsCondition
+  | MeterCompareCondition
+  | ProjectStatusCondition
+  | TrustCompareCondition
+  | EvidenceDiscoveredCondition
+  | EvidenceStatusCondition
+  | EventCompletedCondition
+  | ChoiceSelectedCondition
+  | APCompareCondition
+  | AllCondition
+  | AnyCondition
+  | NotCondition;
+```
+
+Comparison operators are limited to:
+
+```ts
+type CompareOperator = "eq" | "neq" | "lt" | "lte" | "gt" | "gte";
 ```
 
 Examples:
 
-```ts
+```json
 {
-  evidenceId: "earth-science-report-01",
-  discoveredAtEventId: "S01-BOSS-INV-02",
-  status: "current"
+  "all": [
+    { "flag": "speak_up_safety", "op": "eq", "value": "low" },
+    { "eventCompleted": "S01-CORE-02" }
+  ]
 }
 ```
 
-Exploration discoveries should likewise reference the corresponding exploration Event ID rather than introducing a second gameplay clock.
-
-### Judgment rule
-
-When a Decision Package or Boss decision is evaluated, the engine should determine which evidence had been discovered by that decision point and evaluate PM Judgment against that available set.
-
-Conceptually:
-
-```text
-Decision Event X
-→ determine evidence discovered before / at X
-→ evaluate judgment against that evidence set
-→ do not use later evidence as hindsight
-```
-
-This supports the locked product rule that **judgment quality is based on evidence available at the time**.
-
-### Telemetry boundary
-
-Real-world timestamps may be captured later in analytics / telemetry logs for session analysis, but they are not part of the gameplay Evidence contract and must not affect deterministic run logic.
-
-### Why
-
-- Directly supports evidence-at-the-time PM Judgment scoring.
-- Keeps replay and deterministic tests independent from wall-clock time.
-- Uses Scenario Event IDs as the canonical progression anchors instead of inventing a second time system.
-- Makes debug traces explainable: reviewers can see exactly which evidence existed before a specific decision.
-- Keeps analytics concerns separate from product-state semantics.
-
-## 13. Stable Semantic Event IDs
-
-### Decision
-
-Scenario Event IDs use a **semantic namespace plus stable sequence**.
-
-General form:
-
-```text
-S<scenario>-<namespace>-<sequence>
-```
-
-Examples for Scenario 01:
-
-```text
-S01-CORE-01
-S01-CORE-02
-S01-EXP-ENG-01
-S01-EXP-CAFE-01
-S01-REACT-01
-S01-BOSS-INV-01
-S01-BOSS-DEC-01
-```
-
-Namespaces should describe the event's authored role without encoding display copy. MVP may use namespaces such as:
-
-- `CORE` — main scenario progression
-- `EXP-<LOCATION>` — exploration events, such as `EXP-ENG`, `EXP-CAFE`, or `EXP-SUPPLY`
-- `REACT` — reactive world events
-- `LIGHT` — light / absurd events
-- `BOSS-INV` — Boss investigation actions / reveals
-- `BOSS-DEC` — Boss decision events
-
-Additional namespaces may be added only when a real scenario need exists.
-
-### Stability rule
-
-Event ID is **identity**, not display name and not the sole source of presentation order.
-
-Therefore:
-
-- renaming an event does not change its ID,
-- editing event copy does not change its ID,
-- moving an event in the authored sequence does not automatically change its ID,
-- inserting a new event does not trigger renumbering of existing IDs,
-- released / referenced IDs must remain stable once other content or telemetry depends on them.
-
-A sequence number may have gaps. Gaps are preferable to renumbering stable IDs.
-
-### Cross-reference role
-
-Stable Event IDs are canonical anchors that may be referenced by:
-
-- `EvidenceInstance.discoveredAtEventId`,
-- decision / run history,
-- trigger conditions,
-- consequence rules,
-- telemetry,
-- deterministic tests,
-- replay and debugging traces,
-- scoring cutoffs for evidence-at-the-time judgment.
-
-Example:
-
-```text
-evidence discovered at S01-BOSS-INV-02
-→ final decision at S01-BOSS-DEC-01
-→ evidence-at-decision set can be reconstructed deterministically
-```
-
-### Guardrails
-
-Do not derive Event IDs from mutable titles or localized strings.
-
-Do not use a single global counter such as `E001` without scenario / semantic context.
-
-Do not treat lexical ID order as the authoritative runtime sequence; explicit scenario progression / trigger data owns ordering and availability.
-
-### Why
-
-- Makes logs and telemetry readable without opening the event definition.
-- Gives Evidence, history, triggers, tests, and scoring a stable cross-reference key.
-- Prevents harmless narrative edits from breaking references.
-- Supports future scenarios naturally with `S02-*`, `S03-*`, and so on.
-- Keeps identity stable while allowing the scenario structure to evolve during iteration.
-
-## 14. Structured Decision Scoring Contributions
-
-### Decision
-
-MVP uses **structured decision scoring contributions plus a centralized Scoring Engine** rather than direct ad-hoc score mutation inside gameplay effects.
-
-A choice may declare structured scoring inputs. When that choice is selected, the runtime records the decision and its scoring contribution for later aggregation.
-
-Illustrative authoring direction:
-
-```ts
-interface ScoringContribution {
-  projectPerformance?: number;
-  pmJudgment?: number;
-  discoveryReflection?: number;
-}
-```
-
-Illustrative decision history direction:
-
-```ts
-interface DecisionRecord {
-  eventId: string;
-  choiceId: string;
-  scoring: ScoringContribution;
-}
-```
-
-The exact contribution fields, scales, and validation bounds remain to be finalized in later scoring decisions.
-
-### Centralized scoring flow
-
-Conceptually:
-
-```text
-Player decisions / run state / outcome
-          ↓
-Structured scoring inputs
-          ↓
-Centralized Scoring Engine
-          ↓
-Project Performance
-PM Judgment
-Discovery / Reflection
-          ↓
-Total score + Performance × Judgment evaluation
-          ↓
-PM Style / ending inputs / PMP-aligned profile
-```
-
-The currently approved overall scoring model remains governed by `SCORING_AND_ENDINGS.md`; this section defines the implementation architecture for carrying scoring inputs, not a replacement scoring formula.
-
-### Source separation
-
-The three major score areas intentionally do not rely on the same source of truth:
-
-- **Project Performance** should be driven primarily by actual project state, mission outcome, and delivery consequences.
-- **PM Judgment** should be driven primarily by structured decision-quality contributions evaluated against what the player could reasonably know at the time.
-- **Discovery / Reflection** may be driven by structured exploration, evidence, investigation, and Lessons Learned inputs.
-
-This separation is required to preserve the locked rule:
-
-**Mission Outcome ≠ PM Judgment.**
-
-A decision may therefore improve short-term delivery while reducing PM Judgment, or vice versa.
-
-Example conceptual trade-off:
-
-```text
-Practical Shortcut
-Project Performance  +3
-PM Judgment          -4
-```
-
-The game must be able to represent this without forcing both axes to move in the same direction.
-
-### Outcome-bias guardrail
-
-Do not derive PM Judgment solely from final meters or final mission outcome.
-
-A lucky successful outcome must not retroactively convert a poorly supported decision into good judgment. Conversely, a prudent decision taken under uncertainty may retain strong PM Judgment even if later Hidden Truth or downstream events produce a worse mission result.
-
-Evidence-at-the-time scoring should use the progression / Evidence contracts defined earlier in this document.
-
-### Content-contract guardrail
-
-Do not use arbitrary `score_delta` effects as the default way to mutate aggregate score state from Event JSON.
-
-Scoring inputs should remain structured and inspectable so the result can later explain which decisions contributed to a player's style and profile.
-
-This section does **not** yet decide whether PM Judgment itself is a single authored number or a set of component dimensions. That remains an open design decision.
-
-### Why
-
-- Preserves the separation between delivery outcome and decision quality.
-- Supports Practical Shortcut trade-offs explicitly.
-- Avoids outcome bias in Boss and Hidden Truth evaluation.
-- Makes PM Style and result explanations traceable back to actual decisions.
-- Keeps scoring deterministic and testable.
-- Creates a portfolio-friendly scoring model that can explain why a player received a result instead of producing an opaque total.
-
-## 15. PM Judgment Dimensions
-
-### Decision
-
-PM Judgment uses three cross-scenario dimensions:
-
-```ts
-interface PMJudgmentContribution {
-  evidence?: number;
-  decision?: number;
-  execution?: number;
-}
-```
-
-The three dimensions represent different questions about the quality of a PM decision:
-
-- `evidence` — Did the player seek, recognize, and use the relevant information and uncertainty available at that time?
-- `decision` — Was the recommendation or trade-off itself reasonable given the evidence, objectives, risk, constraints, and authority available at that time?
-- `execution` — Was the decision carried forward with appropriate sequencing, governance, escalation, communication, and follow-through?
-
-A choice may therefore produce a mixed judgment profile rather than a single opaque score.
-
-Illustrative examples:
-
-```ts
-// Careful Boss recommendation
+```json
 {
-  evidence: 3,
-  decision: 2,
-  execution: 1
+  "any": [
+    { "evidenceDiscovered": "supplier-cert-gap-01" },
+    { "trust": "sponsor", "op": "gte", "value": 70 }
+  ]
 }
 ```
+
+### Trigger evaluation timing
+
+For a completed interaction:
+
+```text
+validate selection
+→ capture evidence-at-decision snapshot
+→ record DecisionRecord
+→ resolve Effects
+→ mark Event complete
+→ evaluate trigger eligibility
+→ enqueue deterministic reactive Events
+```
+
+This ordering prevents later reactive Evidence from contaminating the decision that caused it.
+
+### Reactive event rules
+
+Reactive definitions may declare:
 
 ```ts
-// Practical Shortcut: fast execution without enough assessment
-{
-  evidence: -2,
-  decision: 0,
-  execution: 2
+interface ReactiveEventRule {
+  eventId: EventId;
+  when: TriggerCondition;
+  once: boolean;
+  priority: number;
 }
 ```
 
-The numeric scale, dimension applicability rules, and final aggregation / normalization are intentionally not fixed by this decision and remain to be specified separately.
+If multiple Events become eligible simultaneously:
 
-### Separation from PMP profile
+1. higher explicit priority resolves first,
+2. ties use authored scenario order,
+3. Event ID lexical order is never used as gameplay ordering logic.
 
-PM Judgment dimensions and PMP-aligned learning domains are different layers and must remain separate.
+Triggers determine **availability / enqueueing**. Consequences still occur through normal Event interactions and Effects; trigger rules do not mutate state directly.
 
-`evidence / decision / execution` answer:
+---
 
-> How well did the player make and carry through this decision?
+## 14. Event Definition Contract
 
-`People / Process / Business Environment` answer:
+All Scenario content uses a common Event envelope plus a typed interaction payload.
 
-> Which PMP-aligned competency areas did this content exercise or reveal?
+```ts
+type EventKind =
+  | "core"
+  | "exploration"
+  | "reactive"
+  | "light"
+  | "crisis"
+  | "reflection";
 
-A choice may therefore contribute to one or more PMP domains independently from whether its PM Judgment contribution is positive or negative.
+interface EventDefinition {
+  id: EventId;
+  scenarioId: ScenarioId;
+  phaseId: PhaseId;
+  kind: EventKind;
+  title: string;
+  summary: string;
+  detail?: string;
+  availability?: TriggerCondition;
+  interaction: EventInteraction;
+  pmpTags?: PmpTagSet;
+}
+```
 
-Do not use PMP domain coverage as a substitute for decision-quality scoring.
+### Interaction union
 
-### Outcome-bias guardrail
+MVP needs explicit interaction types for already-approved Scenario 01 mechanics:
 
-The three Judgment dimensions must be evaluated against the information and authority reasonably available at the decision point, not against later Hidden Truth or final mission outcome.
+```ts
+type EventInteraction =
+  | SingleChoiceInteraction
+  | RankingInteraction
+  | EvidenceDiagnosisInteraction
+  | DecisionPackageInteraction
+  | InvestigationInteraction
+  | LessonsSelectInteraction;
+```
 
-In particular:
+- `single_choice` — standard project decision.
+- `ranking` — Opening Triage prioritization.
+- `evidence_diagnosis` — choose key Evidence plus diagnosis category for Fake Green.
+- `decision_package` — Recommendation / Reason / Next Step.
+- `investigation` — Boss source + intent investigation actions.
+- `lessons_select` — Lessons Learned selection.
 
-- a lucky outcome does not erase weak evidence discipline,
-- a bad outcome does not automatically invalidate a defensible decision,
-- fast execution may score positively on `execution` while the same choice scores negatively on `evidence`,
-- formal or process-heavy behavior is not automatically good Judgment if it does not improve the actual decision.
+Each interaction type owns its own schema rather than overloading one giant optional object.
 
-### Why
+### Standard choice shape
 
-- Makes PM Judgment explainable rather than opaque.
-- Supports realistic mixed trade-offs such as the Firefighter pattern.
-- Allows Ending Review to identify specific strengths and weaknesses.
-- Keeps decision quality distinct from PMP content coverage.
-- Provides a reusable scoring language across future scenarios without tying Judgment to scenario-specific mechanics.
+Where an interaction contains selectable choices:
 
-## Open Decisions
+```ts
+interface ChoiceDefinition {
+  id: string;
+  text: string;
+  preview?: string;
+  effects: Effect[];
+  judgment?: PMJudgmentContribution;
+  discoveryReflection?: DiscoveryReflectionContribution[];
+  pmpTags?: PmpTagSet;
+  consequenceText?: string;
+  pmpLens?: PmpLensContent;
+}
+```
 
-- Final MVP Effect vocabulary and target identifiers
-- Initial MVP hidden-flag registry entries and defaults
-- PM Judgment dimension applicability / scale / aggregation
-- Discovery / Reflection contribution representation
-- PMP tag / coverage representation
-- Event trigger / consequence rules
+Guardrails:
+
+- no executable callbacks,
+- no arbitrary state paths,
+- stable choice IDs once referenced by triggers / telemetry,
+- option ordering is presentation data and may be randomized without changing identity,
+- normal gameplay copy stays Cat-first; PMP terminology belongs primarily in optional Lens content.
+
+---
+
+## 15. Scenario Progression and Phase Rules
+
+Event ID does not determine runtime order.
+
+Scenario definition owns explicit phase structure and authored ordering:
+
+```ts
+interface ScenarioDefinition {
+  id: ScenarioId;
+  phases: PhaseDefinition[];
+  hiddenTruthOptions: HiddenTruthId[];
+  initialState: ScenarioInitialState;
+}
+```
+
+Core progression is mandatory unless an approved branch says otherwise. Exploration / Light / Reactive Events are conditionally available around that spine.
+
+AP remains information-gathering resource only in MVP:
+
+- +1 base AP per phase,
+- bank cap = 2,
+- rare bonus AP allowed only through approved content,
+- Boss grants 2 free Investigation Actions plus saved AP 1:1.
+
+Hidden Truth is selected once at run start and earlier Evidence must remain logically compatible with it.
+
+---
+
+## 16. Validation Requirements
+
+Before Scenario/Event data is accepted at build/test time, validation must reject:
+
+- duplicate Event / Evidence / relationship / flag / skill IDs,
+- unknown registry references,
+- invalid hidden-flag values,
+- meter IDs outside the five-meter registry,
+- values outside configured bounds,
+- invalid Evidence supersession references,
+- triggers referencing unknown Events / choices / Evidence,
+- generic state-path mutations,
+- unsupported interaction types,
+- scoring dimensions outside the approved set,
+- PMP skill tags outside the registry.
+
+Prefer TypeScript discriminated unions plus runtime schema validation for authored JSON/data.
+
+Validation failure is an authoring/build error, not a recoverable gameplay condition.
+
+---
+
+## 17. Determinism and Testability
+
+Given the same:
+
+- scenario data,
+- run seed / Hidden Truth,
+- ordered player selections,
+
+…the engine must produce the same:
+
+- state transitions,
+- Evidence history,
+- reactive Event eligibility,
+- decision history,
+- scoring inputs,
+- ending inputs.
+
+Randomness must be seeded or selected at explicit initialization boundaries. Core scored decisions must never depend on runtime AI generation.
+
+Minimum engine-level tests should cover:
+
+- Effect resolution + clamping,
+- hidden-flag validation,
+- Evidence lifecycle,
+- evidence-at-the-time snapshotting,
+- trigger ordering,
+- PM Judgment applicability (`undefined` vs `0`),
+- PMP coverage accumulation,
+- deterministic replay from a decision sequence.
+
+---
+
+## 18. Remaining Product / Tuning Decisions
+
+The implementation architecture above is sufficiently defined for engine work. The following are **not architecture blockers**, but must be finalized before content balancing / ending calibration is considered done:
+
+- exact initial numeric values for the five visible meters,
+- relationship/trust registry entries, defaults, and bounds used by Scenario 01,
+- event-specific hidden-flag transitions beyond the locked initial story state,
+- Project Performance formula and weights,
+- PM Judgment dimension weights / minimum-observation tuning,
+- Discovery / Reflection category weights,
+- PMP coverage/confidence thresholds,
+- PM Style / Almost Balanced thresholds after playtesting,
+- final per-event scoring contributions and PMP tags,
+- final Scenario 01 Event IDs / choice IDs as content is authored.
+
+These values should be tuned from product intent and playtest evidence rather than inferred ad hoc by Codex.
+
+---
+
+## 19. Engineering Handoff Boundary
+
+The next engineering tickets may implement the **generic contract layer** without deciding scenario-specific product behavior:
+
+1. core TypeScript IDs / registries / state types,
+2. runtime validation schemas,
+3. Effect Resolver,
+4. Evidence lifecycle + decision history,
+5. declarative Trigger evaluator,
+6. scoring accumulator interfaces (not final balance constants),
+7. Event envelope + typed interaction schemas,
+8. deterministic unit tests.
+
+Codex must not invent missing Scenario 01 values or scoring weights while implementing those contracts. Missing product values should remain explicit configuration placeholders or follow-up requirements.
