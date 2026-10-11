@@ -449,17 +449,7 @@ This is required for Boss evaluation and Fake Green reasoning.
 
 Every scored player decision produces a durable run-history record.
 
-```ts
-interface DecisionRecord {
-  eventId: EventId;
-  interactionId: string;
-  selection: DecisionSelection;
-  availableEvidenceIds: EvidenceId[];
-  judgment?: PMJudgmentContribution;
-  discoveryReflection?: DiscoveryReflectionContribution[];
-  pmpTags?: PmpTagSet;
-}
-```
+The canonical `DecisionRecord` shape is defined in Section 20. Earlier or subordinate documents that show a shorter `choiceId`-only example are illustrative only and must not be implemented as a competing runtime shape.
 
 The history record exists so replay/debug/result explanation can reconstruct:
 
@@ -561,9 +551,7 @@ authored ordinal ratings
 → PM Judgment 0–100
 ```
 
-Dimension weights, minimum-observation rules, and final normalization constants live in one scoring configuration module, not inside Event JSON.
-
-Initial tuning may use equal dimension weights; production weights remain playtest-adjustable without changing Event content.
+`SCORING_IMPLEMENTATION_CONTRACT.md` owns the approved `DecisionWeight = 1 | 2 | 3` weighting contract. Dimension weights, minimum-observation rules, and final 0–100 normalization constants live in centralized scoring configuration rather than Event JSON and remain tuning values where the scoring contract leaves them open.
 
 Outcome, Hidden Truth, and later Evidence must never retroactively rewrite a prior Judgment contribution.
 
@@ -657,7 +645,7 @@ When a scored decision occurs, record which tagged skills were actually observed
 ```ts
 interface PmpObservation {
   eventId: EventId;
-  choiceId: string;
+  choiceId?: ChoiceId;
   skills: PmpSkillId[];
   judgmentQuality?: number;
 }
@@ -834,15 +822,15 @@ type EventInteraction =
 - `investigation` — Boss source + intent investigation actions.
 - `lessons_select` — Lessons Learned selection.
 
-Each interaction type owns its own schema rather than overloading one giant optional object.
+The canonical payload schema for each interaction is defined in Section 20. Each interaction owns its own schema rather than overloading one giant optional object.
 
 ### Standard choice shape
 
-Where an interaction contains selectable choices:
+Where an interaction contains standard selectable choices:
 
 ```ts
 interface ChoiceDefinition {
-  id: string;
+  id: ChoiceId;
   text: string;
   preview?: string;
   effects: Effect[];
@@ -905,6 +893,7 @@ Before Scenario/Event data is accepted at build/test time, validation must rejec
 - triggers referencing unknown Events / choices / Evidence,
 - generic state-path mutations,
 - unsupported interaction types,
+- malformed interaction selections or cardinalities,
 - scoring dimensions outside the approved set,
 - PMP skill tags outside the registry.
 
@@ -978,4 +967,315 @@ The next engineering tickets may implement the **generic contract layer** withou
 7. Event envelope + typed interaction schemas,
 8. deterministic unit tests.
 
-Codex must not invent missing Scenario 01 values or scoring weights while implementing those contracts. Missing product values should remain explicit configuration placeholders or follow-up requirements.
+---
+
+## 20. Canonical Interaction, Selection, Lens, and DecisionRecord Contracts
+
+This section closes the schema placeholders required by Issue #11. For the types named below, **this section is canonical**. If an earlier illustrative snippet or `SCORING_IMPLEMENTATION_CONTRACT.md` uses a shorter example, implement this section and treat the shorter snippet as explanatory only.
+
+### Shared ID aliases
+
+```ts
+type InteractionId = string;
+type ChoiceId = string;
+type RankingItemId = string;
+type DiagnosisId = string;
+type DecisionPackageOptionId = string;
+type InvestigationSourceId = string;
+type LessonId = string;
+```
+
+These are semantic aliases at the TypeScript boundary. Runtime validation still enforces uniqueness within the relevant Event / interaction.
+
+### Optional PMP Lens content
+
+PMP Lens is authored, optional, and non-blocking to normal play.
+
+```ts
+interface PmpLensOptionNote {
+  optionId: string;
+  note: string;
+}
+
+interface PmpLensContent {
+  title?: string;
+  concept: string;
+  explanation: string;
+  optionNotes?: PmpLensOptionNote[];
+  skills?: PmpSkillId[];
+}
+```
+
+Rules:
+
+- `concept` is the concise formal PM concept or lens label.
+- `explanation` provides the authored learning explanation.
+- `optionNotes` may explain why specific options are strong, weak, premature, wrong-owner, or Practical Shortcut choices.
+- `skills` references only registered PMP skill IDs; domain display is derived from the skill registry rather than authored independently.
+- Lens content must not reveal future Hidden Truth or future latent consequences.
+
+### Shared interaction base
+
+```ts
+interface BaseEventInteraction {
+  id: InteractionId;
+  decisionWeight?: DecisionWeight;
+}
+```
+
+`decisionWeight` is required only when the interaction produces PM Judgment scoring under `SCORING_IMPLEMENTATION_CONTRACT.md`. An unscored Light / flavor interaction may omit it.
+
+### 1. Single choice
+
+```ts
+interface SingleChoiceInteraction extends BaseEventInteraction {
+  type: "single_choice";
+  choices: ChoiceDefinition[];
+}
+```
+
+Validation:
+
+- at least two choices for a decision interaction,
+- choice IDs unique within the interaction.
+
+### 2. Ranking
+
+```ts
+interface RankingItemDefinition {
+  id: RankingItemId;
+  text: string;
+  detail?: string;
+  pmpLens?: PmpLensContent;
+}
+
+interface RankingInteraction extends BaseEventInteraction {
+  type: "ranking";
+  items: RankingItemDefinition[];
+  rankCount: number;
+}
+```
+
+`rankCount` is the exact number of distinct items the player must order. Opening Triage can therefore set `rankCount` equal to the number of issues without making that a universal engine rule.
+
+Validation:
+
+- item IDs unique,
+- `rankCount >= 1`,
+- `rankCount <= items.length`.
+
+### 3. Evidence diagnosis
+
+```ts
+interface DiagnosisOptionDefinition {
+  id: DiagnosisId;
+  text: string;
+  detail?: string;
+  pmpLens?: PmpLensContent;
+}
+
+interface EvidenceDiagnosisInteraction extends BaseEventInteraction {
+  type: "evidence_diagnosis";
+  evidenceIds: EvidenceId[];
+  diagnosisOptions: DiagnosisOptionDefinition[];
+  minEvidenceSelections: number;
+  maxEvidenceSelections: number;
+}
+```
+
+Validation:
+
+- Evidence IDs must exist in the supplied scenario registry,
+- diagnosis IDs unique,
+- `0 <= minEvidenceSelections <= maxEvidenceSelections`,
+- `maxEvidenceSelections <= evidenceIds.length`.
+
+The evaluator that later judges which Evidence / diagnosis combination is strong is **not** part of Issue #11.
+
+### 4. Decision Package
+
+Decision Package collects three independently authored components: Recommendation, Reason, and Next Step.
+
+```ts
+interface DecisionPackageOptionDefinition {
+  id: DecisionPackageOptionId;
+  text: string;
+  detail?: string;
+  judgment?: PMJudgmentContribution;
+  pmpTags?: PmpTagSet;
+  pmpLens?: PmpLensContent;
+}
+
+interface DecisionPackageInteraction extends BaseEventInteraction {
+  type: "decision_package";
+  recommendations: DecisionPackageOptionDefinition[];
+  reasons: DecisionPackageOptionDefinition[];
+  nextSteps: DecisionPackageOptionDefinition[];
+}
+```
+
+Validation:
+
+- IDs are unique within each component list,
+- each component list contains at least one option.
+
+Component selection is represented now; **coherence scoring across combinations and final gameplay consequences are deferred to the Decision Package evaluator ticket**. Issue #11 must not invent a coherence formula or infer Effects from the selected combination.
+
+### 5. Investigation
+
+Boss investigation selects one Source + one Intent per investigation action.
+
+```ts
+type InvestigationIntentId =
+  | "evidence"
+  | "impact"
+  | "alternatives"
+  | "compliance"
+  | "authority";
+
+interface InvestigationSourceDefinition {
+  id: InvestigationSourceId;
+  text: string;
+  detail?: string;
+}
+
+interface InvestigationIntentDefinition {
+  id: InvestigationIntentId;
+  text: string;
+  detail?: string;
+}
+
+interface InvestigationInteraction extends BaseEventInteraction {
+  type: "investigation";
+  sources: InvestigationSourceDefinition[];
+  intents: InvestigationIntentDefinition[];
+}
+```
+
+Validation:
+
+- source IDs unique,
+- intent IDs unique,
+- intent IDs limited to the approved five categories.
+
+The interaction schema represents **one investigation action**. Runtime action allowance (2 free Boss actions + saved AP) belongs to Player / Boss runtime rules, not this payload. Source × intent result lookup, Evidence reveal, and conditional consequences are deferred; Issue #11 validates the pair only.
+
+### 6. Lessons Learned selection
+
+```ts
+interface LessonOptionDefinition {
+  id: LessonId;
+  text: string;
+  detail?: string;
+  judgment?: PMJudgmentContribution;
+  discoveryReflection?: DiscoveryReflectionContribution[];
+  pmpTags?: PmpTagSet;
+  pmpLens?: PmpLensContent;
+}
+
+interface LessonsSelectInteraction extends BaseEventInteraction {
+  type: "lessons_select";
+  lessons: LessonOptionDefinition[];
+  minSelections: number;
+  maxSelections: number;
+}
+```
+
+Validation:
+
+- lesson IDs unique,
+- `0 <= minSelections <= maxSelections`,
+- `maxSelections <= lessons.length`.
+
+The specific number of lessons a Scenario asks the player to choose is authored content, not a universal engine constant.
+
+### Canonical DecisionSelection union
+
+```ts
+interface SingleChoiceSelection {
+  type: "single_choice";
+  choiceId: ChoiceId;
+}
+
+interface RankingSelection {
+  type: "ranking";
+  orderedItemIds: RankingItemId[];
+}
+
+interface EvidenceDiagnosisSelection {
+  type: "evidence_diagnosis";
+  evidenceIds: EvidenceId[];
+  diagnosisId: DiagnosisId;
+}
+
+interface DecisionPackageSelection {
+  type: "decision_package";
+  recommendationId: DecisionPackageOptionId;
+  reasonId: DecisionPackageOptionId;
+  nextStepId: DecisionPackageOptionId;
+}
+
+interface InvestigationSelection {
+  type: "investigation";
+  sourceId: InvestigationSourceId;
+  intentId: InvestigationIntentId;
+}
+
+interface LessonsSelectSelection {
+  type: "lessons_select";
+  lessonIds: LessonId[];
+}
+
+type DecisionSelection =
+  | SingleChoiceSelection
+  | RankingSelection
+  | EvidenceDiagnosisSelection
+  | DecisionPackageSelection
+  | InvestigationSelection
+  | LessonsSelectSelection;
+```
+
+Selection validation must cross-check the corresponding interaction definition, including membership, uniqueness, and cardinality.
+
+### Canonical combined DecisionRecord
+
+```ts
+interface DecisionRecord {
+  eventId: EventId;
+  interactionId: InteractionId;
+  selection: DecisionSelection;
+  decisionWeight: DecisionWeight;
+  availableEvidenceIds: EvidenceId[];
+  pmJudgment?: PMJudgmentContribution;
+  discoveryReflection?: DiscoveryReflectionContribution[];
+  pmpTags?: PmpTagSet;
+}
+```
+
+This is the single canonical runtime shape for Issue #11.
+
+Rules:
+
+- `selection` carries the interaction-specific selected IDs; do not add a competing top-level `choiceId` field.
+- For `single_choice`, `selection.choiceId` replaces the shorter illustrative `choiceId` field shown in `SCORING_IMPLEMENTATION_CONTRACT.md`.
+- `decisionWeight` uses the approved `1 | 2 | 3` contract from `SCORING_IMPLEMENTATION_CONTRACT.md`.
+- `availableEvidenceIds` is captured before Effects / reactive consequences so evidence-at-the-time Judgment is reconstructable.
+- `pmJudgment` is the canonical field name; earlier `judgment` shorthand in examples is not a second runtime field.
+- Discovery / Reflection and PMP metadata remain distinct from PM Judgment.
+
+For unscored interactions that do not need a `DecisionRecord`, normal run/event history may still record completion separately. Do not make `decisionWeight` optional inside `DecisionRecord` merely to store unrelated flavor history.
+
+### Issue #11 implementation boundary
+
+Issue #11 implements and runtime-validates the contracts in this section. It must **not** implement:
+
+- Ranking quality evaluation,
+- Evidence Diagnosis correctness evaluation,
+- Decision Package coherence scoring,
+- Investigation source × intent result resolution,
+- Lessons Learned quality aggregation,
+- Effect resolution,
+- Trigger evaluation,
+- aggregate score calculation.
+
+Those behaviors require their own approved evaluator / engine contracts.
