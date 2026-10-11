@@ -123,10 +123,16 @@ Do not present the game profile as an official PMP score or pass-probability pre
 
 Visual direction is **Hybrid Pixel Narrative**:
 
-- system / map layer = minimal, clean pixel-art language
-- narrative / emotional layer = expressive hand-drawn illustration
+- system / map layer = minimal, clean pixel-art language,
+- narrative / emotional layer = expressive pixel-art portraits with controlled cinematic escalation.
 
-Prioritize mobile readability, clear hierarchy, and one-handed tap targets over decorative complexity.
+Preserve character identity and primary silhouette across map sprites and event portraits. Do not normalize the cast into one generic body type.
+
+Normal events should remain clean and readable; major events may use stronger pose, expression, and moderate cinematic lighting without becoming photorealistic, grim, or visually noisy.
+
+Prioritize mobile readability, clear hierarchy, one-handed tap targets, and selective environmental detail over decorative complexity.
+
+For AI-generated art, follow the prompt-first small-test workflow in `docs/VISUAL_DIRECTION.md`; do not mass-generate the asset library before visual direction is approved.
 
 ## 10. Definition of Engineering Done
 
