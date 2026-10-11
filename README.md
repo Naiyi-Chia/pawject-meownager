@@ -41,6 +41,8 @@ Deployment references: [Vite GitHub Pages guide](https://vite.dev/guide/static-d
 
 ## Foundation architecture
 
+The approved contract layer is in [`src/contracts/`](src/contracts/README.md). It provides TypeScript types, registries, strict runtime schemas, and context-aware selection/reference validation. It implements no engine resolution or gameplay behavior. `npm test` includes contract fixtures and the existing production browser checks.
+
 - `src/ui/`: accessible HTML shell and responsive CSS.
 - `src/game/scenes/`: Phaser scenes; currently one static technical placeholder.
 - `src/game/mountGame.ts`: runtime ownership and shared canvas scaling.
