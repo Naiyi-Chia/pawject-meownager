@@ -358,12 +358,14 @@ System layer:
 
 Narrative layer:
 
-- hand-drawn character portraits,
-- special-event illustrations,
+- expressive pixel-art character portraits,
+- special-event pixel art,
 - Boss scenes,
 - ending / share cards.
 
-See `VISUAL_DIRECTION.md`.
+Both layers use pixel art at different presentation scales; narrative escalation increases expression and cinematic presentation, not realism.
+
+See [Visual Direction v0.2](VISUAL_DIRECTION.md) for detailed visual rules.
 
 ## 17. Platform & Implementation Direction
 

@@ -304,10 +304,27 @@ The scenario now contains meaningful investigation and trade-offs that should no
 ## Visual direction
 
 ### Decision
-Hybrid Pixel Narrative.
+Keep **Hybrid Pixel Narrative**, but define the hybrid as two pixel-art presentation scales:
+
+- minimal, clean pixel art for map / system state,
+- expressive pixel-art portraits for dialogue / emotion / major events.
+
+Normal events use mobile-first dual portraits with simplified event backgrounds. Major events may escalate from chest-up to half-body presentation with medium-exaggerated expression and moderate cinematic lighting.
+
+Character identity and primary silhouette must remain consistent across sprite and portrait scales, while the cast may intentionally vary in age impression, body type, breed, fur pattern, and clothing.
 
 ### Why
-Minimal pixel art supports system readability; hand-drawn illustration supports emotion and shareability.
+The earlier hand-drawn narrative layer created too much style separation from the map layer. Style tests showed that expressive pixel portraits can preserve stronger character continuity while still providing enough emotional range for workplace comedy and high-stakes decisions.
+
+The intended progression is more expressive and cinematic, not more realistic. This keeps the game cute and readable while allowing serious project tension without becoming grim or visually noisy.
+
+## Visual asset generation workflow
+
+### Decision
+Use a prompt-first, small-test workflow before scaling production assets.
+
+### Why
+Style, character consistency, silhouette preservation, mobile readability, emotional range, and visual-noise control should be validated before generating a full asset library. The preferred production model may change over time and is therefore recorded as an implementation note in `docs/VISUAL_DIRECTION.md`, not as a permanent product requirement.
 
 ## MVP meta
 
