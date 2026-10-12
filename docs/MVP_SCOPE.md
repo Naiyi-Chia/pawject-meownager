@@ -53,8 +53,10 @@ Scenario:
 - Responsive desktop.
 - One-handed tap-friendly interaction.
 - Minimal pixel base map.
-- Hand-drawn narrative illustrations / portraits.
+- Expressive pixel-art narrative portraits / event art.
 - Short summaries with expandable detail.
+
+See [Visual Direction v0.2](VISUAL_DIRECTION.md) for detailed visual rules.
 
 ## Explicitly Not MVP
 
