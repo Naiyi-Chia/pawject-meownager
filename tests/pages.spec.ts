@@ -3,8 +3,9 @@ import { expect, test } from '@playwright/test';
 test('built entry and runtime assets load under the Pages repository path', async ({
   page,
   request,
+  baseURL,
 }) => {
-  const basePath = '/pawject-meownager/';
+  const basePath = new URL(baseURL!).pathname;
   const response = await request.get('./');
   expect(response.status()).toBe(200);
   const html = await response.text();
@@ -16,7 +17,7 @@ test('built entry and runtime assets load under the Pages repository path', asyn
   expect(assets.some((asset) => asset.endsWith('.js'))).toBe(true);
   expect(assets.some((asset) => asset.endsWith('.css'))).toBe(true);
   for (const asset of assets) {
-    expect(asset).toMatch(/^\/pawject-meownager\/assets\//);
+    expect(asset.startsWith(`${basePath}assets/`)).toBe(true);
     const assetResponse = await request.get(asset);
     expect(assetResponse.status()).toBe(200);
     expect(assetResponse.headers()['content-type']).toMatch(
@@ -47,4 +48,10 @@ test('built entry and runtime assets load under the Pages repository path', asyn
     runtimeAssets.every((asset) => asset.startsWith(`${basePath}assets/`)),
   ).toBe(true);
   expect(failedAssets).toEqual([]);
+  const robots = page.locator('meta[name="robots"]');
+  if (basePath.endsWith('/dev/')) {
+    await expect(robots).toHaveAttribute('content', 'noindex, nofollow');
+  } else {
+    await expect(robots).toHaveCount(0);
+  }
 });

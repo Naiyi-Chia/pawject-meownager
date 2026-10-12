@@ -25,17 +25,30 @@ npm test
 
 Browser tests run against the production build, so run `npm run build` before `npm test`. On Linux, use `npx playwright install --with-deps chromium` for browser system dependencies. `npm run preview` serves the build locally; `npm run format` formats implementation files. CI runs lint, formatting, build, and Chromium checks.
 
+To exercise both Pages paths together, run `npm run build:pages` then `npm run test:pages`. This builds the current checkout twice for local/PR QA; the deployment workflow instead checks out `main` and `dev` separately. To inspect the combined build, run `npm run preview` and open the root and `/dev/` paths below on localhost.
+
 Vite uses the repository base path in development and production. For a local production preview, run `npm run build` then `npm run preview` and open `http://localhost:4173/pawject-meownager/`.
 
 ## GitHub Pages deployment
 
-Production URL: <https://naiyi-chia.github.io/pawject-meownager/>.
+| Branch | Environment                        | Fixed URL                                             |
+| ------ | ---------------------------------- | ----------------------------------------------------- |
+| `main` | Production                         | <https://naiyi-chia.github.io/pawject-meownager/>     |
+| `dev`  | Dev Preview / Human Product Verify | <https://naiyi-chia.github.io/pawject-meownager/dev/> |
 
-One-time repository setup: go to **Settings → Pages → Build and deployment → Source** and select **GitHub Actions**. The previous **Deploy from a branch / main / root** setting serves raw source and must be replaced. Ensure repository Actions are enabled and the `github-pages` environment permits deployment from `main`.
+Repository setup: **Settings → Pages → Build and deployment → Source → GitHub Actions**. Ensure Actions are enabled and **Settings → Environments → github-pages → Deployment branches** permits both `main` and `dev`. Keep scoped branches excluded. The Dev Preview workflow can run immediately after integration into `dev`; a production release is not required to test it.
 
-After the normal review, integration, and release flow puts this fix on `main`, `.github/workflows/pages.yml` installs locked dependencies, runs the checks, builds the Vite app, uploads **only `dist/`**, and deploys it using the supported Pages Actions. Pushes to `main` trigger deployment; manual workflow runs also require the `main` branch. The existing foundation CI workflow remains in place for scoped work and PRs.
+`.github/workflows/pages.yml` responds to pushes to `main` or `dev`; manual runs are restricted to those branches. Each run builds explicit `main` source at the production base and explicit `dev` source using `--mode dev-preview`. It composes `main` output at the artifact root and `dev` output in `dev/`, verifies the artifact, and runs browser checks at both paths before uploading one combined Pages artifact. A shared concurrency group serializes the entire operation. No Dev output is copied to the production root. `deployment.txt` records the two source commit SHAs for Product Verify.
 
-After a successful deployment, repeat Production Smoke at the production URL: confirm the shell and Phaser placeholder are visible, including at a phone-sized viewport, and that script/style requests have no asset-path 404s. Local tests do not substitute for this check. Issue #1 remains open until Production Smoke passes.
+Deployment is atomic: if either build or QA fails, neither path is deployed and the last successful site remains available. Foundation CI builds and tests both modes for PRs.
+
+Vite's default base remains `/pawject-meownager/`; `dev-preview` mode uses `/pawject-meownager/dev/`, adds `[DEV]` to the tab title, and inserts `noindex, nofollow`. For a standalone local Dev build, run `npm run build -- --mode dev-preview`, then `npm run preview -- --mode dev-preview` and open `http://localhost:4173/pawject-meownager/dev/`.
+
+Persistence must go through `getGameStorage()` in `src/platform/storage.ts`: it derives the namespace from Vite's build base (`pawject-meownager:production:*` or `pawject-meownager:dev:*`). The adapter supports read/write/remove without clearing unrelated keys or reading legacy unprefixed saves. No migration or game save behavior is introduced here; the current foundation has no persistent gameplay state. Future meta persistence must use this adapter rather than direct `localStorage`.
+
+Bootstrap caveat: until this workflow also reaches `main` through the normal release flow, the previous main-only workflow can replace the site with a root-only artifact on a `main` push. After such a release, re-run the new Pages workflow from `dev` to restore both paths. Once both branches carry this workflow, either branch deploy preserves both environments. Do not release to `main` merely to enable the first Dev Preview.
+
+After integration and a successful deployment, perform Human Product Verify at the Dev Preview URL, including the primary 390 px phone viewport. Confirm `[DEV]`, no indexing, correct `/dev/assets/` requests, and the `dev` SHA in `deployment.txt`. Check the production root still has no Dev marker and uses root assets. Local tests do not substitute for live smoke or Human Product Verify; normal integration and release gates still apply.
 
 Deployment references: [Vite GitHub Pages guide](https://vite.dev/guide/static-deploy.html#github-pages) and [GitHub Pages workflow documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
 
