@@ -1,0 +1,188 @@
+name: Automated Technical Review experiment
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+# Serialize the complete claim/review/report lifecycle, including duplicate deliveries.
+concurrency:
+  group: technical-review-${{ github.event.issue.number }}-${{ github.event.sender.login }}-${{ contains(github.event.comment.body, '<!-- engineering-ready-for-review -->') }}
+  cancel-in-progress: false
+  queue: max
+
+env:
+  REVIEW_MODEL: ${{ vars.TECHNICAL_REVIEW_MODEL || 'gpt-6.1-sol' }}
+
+jobs:
+  collect:
+    if: >-
+      github.repository == 'Naiyi-Chia/pawject-meownager' &&
+      github.event_name == 'issue_comment' &&
+      github.event.action == 'created' &&
+      !github.event.issue.pull_request &&
+      github.event.sender.login == 'Naiyi-Chia' &&
+      github.event.comment.user.login == 'Naiyi-Chia' &&
+      contains(github.event.comment.body, '<!-- engineering-ready-for-review -->')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: read
+      checks: read
+      statuses: read
+    steps:
+      # Only default-branch adapter code runs; reviewed files are read with git show.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Collect authoritative context
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/technical-review.mjs collect
+      - uses: actions/upload-artifact@v4
+        with:
+          name: review-context
+          path: |
+            review-envelope.json
+            scripts/technical-review.mjs
+          retention-days: 7
+          if-no-files-found: error
+
+  claim:
+    needs: collect
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      issues: write
+    outputs:
+      duplicate: ${{ steps.claim.outputs.duplicate }}
+      comment: ${{ steps.claim.outputs.comment }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: review-context
+      - uses: actions/github-script@v7
+        id: claim
+        with:
+          script: |
+            const fs = require('node:fs');
+            const { MARKER, reviewKey, existingReview } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/technical-review.mjs`);
+            const envelope = JSON.parse(fs.readFileSync('review-envelope.json', 'utf8'));
+            const key = reviewKey(envelope.id, context.payload.comment.id);
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo, issue_number: context.issue.number, per_page: 100
+            });
+            const existing = existingReview(comments, key);
+            if (existing) {
+              core.setOutput('duplicate', 'true');
+              core.notice('This Issue + commit/handoff already has a durable review claim. No API call.');
+            } else {
+              const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+              const comment = await github.rest.issues.createComment({
+                ...context.repo, issue_number: context.issue.number,
+                body: `${MARKER}\n${key}\n\nAutomated Technical Review: PENDING\n\nIssue: #${context.issue.number}\nCommit: ${envelope.id.commit || 'unresolved'}\nModel: ${envelope.model}\nRun: ${run}\n\nA persistent claim prevents duplicate API calls. If this run is interrupted, no PASS is implied; inspect the run before posting a new-commit handoff.`
+              });
+              core.setOutput('duplicate', 'false');
+              core.setOutput('comment', String(comment.data.id));
+            }
+
+  review:
+    needs: claim
+    if: needs.claim.outputs.duplicate == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: review-context
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # The fresh reviewer process receives the API key, never a GitHub token.
+      - name: Invoke independent Responses API reviewer
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: node scripts/technical-review.mjs review
+      - uses: actions/upload-artifact@v4
+        with:
+          name: review-result
+          path: review-result.json
+          retention-days: 7
+          if-no-files-found: error
+
+  report:
+    needs: [collect, claim, review]
+    if: >-
+      always() &&
+      github.repository == 'Naiyi-Chia/pawject-meownager' &&
+      github.event.action == 'created' &&
+      !github.event.issue.pull_request &&
+      github.event.sender.login == 'Naiyi-Chia' &&
+      github.event.comment.user.login == 'Naiyi-Chia' &&
+      contains(github.event.comment.body, '<!-- engineering-ready-for-review -->') &&
+      needs.claim.outputs.duplicate != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: review-context
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: review-result
+      - uses: actions/github-script@v7
+        env:
+          CLAIM_COMMENT: ${{ needs.claim.outputs.comment }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            let body, result = 'BLOCKED';
+            try {
+              const adapter = await import(`${process.env.GITHUB_WORKSPACE}/scripts/technical-review.mjs`);
+              let envelope = JSON.parse(fs.readFileSync('review-envelope.json', 'utf8'));
+              let outcome = adapter.blocked('Workflow failed or result artifact missing. Inspect the linked Actions run.');
+              if (fs.existsSync('review-result.json')) {
+                try {
+                  const reviewed = JSON.parse(fs.readFileSync('review-result.json', 'utf8'));
+                  if (JSON.stringify(reviewed.id) !== JSON.stringify(envelope.id) || reviewed.model !== envelope.model)
+                    throw new Error('Result identity mismatch');
+                  outcome = adapter.validate(reviewed.result);
+                } catch {
+                  outcome = adapter.blocked('Result artifact malformed or identity mismatched. No valid review obtained.');
+                }
+              }
+              result = outcome.result;
+              body = adapter.render(envelope.id, envelope.model, outcome, run);
+            } catch {
+              body = `<!-- automated-technical-review -->\n<!-- review-handoff:${context.payload.comment.id} -->\n\n## Automated Technical Review: BLOCKED\n\nIssue: #${context.issue.number}\nBranch / commit: unresolved; see triggering handoff.\nModel configured: ${process.env.REVIEW_MODEL}\nRun: ${run}\n\nBlocking limitation: workflow/context/result artifact failure; no validated review obtained. Resolve the failure before requesting a new review. No implementation state or Human gate changed.`;
+            }
+            if (process.env.CLAIM_COMMENT) {
+              // Preserve the claim key even if the context artifact is unavailable.
+              const previous = await github.rest.issues.getComment({ ...context.repo,
+                comment_id: Number(process.env.CLAIM_COMMENT) });
+              const keys = previous.data.body.match(/<!-- review-(?:key|handoff):[^>]+ -->/g) || [];
+              for (const key of keys) if (!body.includes(key)) body = `${key}\n${body}`;
+              await github.rest.issues.updateComment({ ...context.repo,
+                comment_id: Number(process.env.CLAIM_COMMENT), body });
+            } else {
+              const key = `<!-- review-handoff:${context.payload.comment.id} -->`;
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                ...context.repo, issue_number: context.issue.number, per_page: 100
+              });
+              if (!comments.some(c => c.user.login === 'github-actions[bot]' && c.body.includes(key)))
+                await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+            }
+            if (result !== 'PASS') core.setFailed(`Technical Review: ${result}; see Issue comment and run evidence.`);

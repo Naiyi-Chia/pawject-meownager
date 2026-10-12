@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "test": "playwright test",
     "test:pages": "node scripts/test-pages.mjs",
+    "test:review": "node --test scripts/technical-review.test.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
