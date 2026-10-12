@@ -27,6 +27,8 @@ Browser tests run against the production build, so run `npm run build` before `n
 
 To exercise both Pages paths together, run `npm run build:pages` then `npm run test:pages`. This builds the current checkout twice for local/PR QA; the deployment workflow instead checks out `main` and `dev` separately. To inspect the combined build, run `npm run preview` and open the root and `/dev/` paths below on localhost.
 
+When the repository automation and API credential are configured, an Engineering Ready Issue comment from the trusted repository owner can trigger an independent automated Technical Review. Include the exact `<!-- engineering-ready-for-review -->` marker, scoped branch, and full 40-character commit SHA; the automation posts PASS, FAIL, or BLOCKED back to the same Issue. Human integration, product verification, and release gates still apply. See the [automation setup and limitations](docs/qa/ISSUE_18_AUTO_TECHNICAL_REVIEW.md).
+
 Vite uses the repository base path in development and production. For a local production preview, run `npm run build` then `npm run preview` and open `http://localhost:4173/pawject-meownager/`.
 
 ## GitHub Pages deployment
