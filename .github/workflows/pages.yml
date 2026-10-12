@@ -1,8 +1,8 @@
-name: Deploy production to GitHub Pages
+name: Deploy production and Dev Preview to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
 
 permissions:
@@ -14,8 +14,8 @@ concurrency:
 
 jobs:
   deploy:
-    # Manual runs must also deploy only the release branch.
-    if: github.ref == 'refs/heads/main'
+    # Both paths form one site; the concurrency group serializes build + deploy.
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -25,25 +25,62 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Check out main
+      - name: Check out deployment tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: tooling
+      # Never copy dev output to the root, even when this workflow runs on dev.
+      - name: Check out production source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          path: production
+      - name: Check out preview source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: dev
+          path: preview
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run format:check
-      - run: npm run build
-      - run: npx playwright install --with-deps chromium
-      - run: npm test
+          cache-dependency-path: |
+            tooling/package-lock.json
+            production/package-lock.json
+            preview/package-lock.json
+      - name: Install and validate both sources
+        run: |
+          for source in production preview tooling; do
+            (cd "$source" && npm ci && npm run lint && npm run format:check)
+          done
+      - name: Build production from main
+        working-directory: production
+        run: npm run build
+      - name: Build Dev Preview from dev
+        working-directory: preview
+        run: npm run build -- --mode dev-preview
+      - name: Compose both environments
+        run: |
+          mkdir -p tooling/dist/dev
+          cp -a production/dist/. tooling/dist/
+          cp -a preview/dist/. tooling/dist/dev/
+          node tooling/scripts/verify-pages.mjs tooling/dist
+          printf 'main=%s\ndev=%s\n' "$(git -C production rev-parse HEAD)" "$(git -C preview rev-parse HEAD)" > tooling/dist/deployment.txt
+      - name: Install Chromium
+        working-directory: tooling
+        run: npx playwright install --with-deps chromium
+      - name: Test the composed site at both paths
+        working-directory: tooling
+        env:
+          PAWJECT_COMPOSITE: '1'
+        run: npm test
       - name: Configure Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
-      - name: Upload production output
+      - name: Upload combined output
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
-          path: ./dist
-      - name: Deploy production output
+          path: tooling/dist
+      - name: Deploy combined output
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5

@@ -16,7 +16,9 @@ for (const viewport of [
     });
     await page.setViewportSize(viewport);
     await page.goto('./');
-    await expect(page).toHaveTitle('Pawject Meownager');
+    await expect(page).toHaveTitle(
+      `${testInfo.project.name === 'dev' ? '[DEV] ' : ''}Pawject Meownager`,
+    );
     await expect(page.getByRole('heading', { level: 1 })).toContainText(
       'Meownager',
     );

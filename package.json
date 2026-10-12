@@ -9,8 +9,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:pages": "node scripts/build-pages.mjs",
     "preview": "vite preview",
     "test": "playwright test",
+    "test:pages": "node scripts/test-pages.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
