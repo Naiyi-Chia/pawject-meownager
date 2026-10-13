@@ -105,7 +105,41 @@ async function jsonRequest(url, token, options = {}) {
   return JSON.parse(body);
 }
 
-export async function collect(event, get, git) {
+class PlaybookAccessError extends Error {}
+
+export function githubReaders(repoToken, playbookToken, request = jsonRequest) {
+  return {
+    get: (path) => {
+      if (!path.startsWith('/repos/Naiyi-Chia/pawject-meownager/'))
+        throw new Error('Repository reader cannot access other repositories');
+      return request(`https://api.github.com${path}`, repoToken);
+    },
+    getPlaybook: async (path) => {
+      if (
+        !/^\/repos\/Naiyi-Chia\/naiyi-product-playbook\/(?:commits\/HEAD|contents\/AI_PRODUCT_DEVELOPMENT_PLAYBOOK\.md\?ref=[a-f0-9]{40})$/.test(
+          path,
+        )
+      )
+        throw new PlaybookAccessError(
+          'Canonical Playbook read path is not allowed; no API review performed.',
+        );
+      if (!playbookToken?.trim())
+        throw new PlaybookAccessError(
+          'PLAYBOOK_READ_TOKEN is not configured; canonical Playbook unavailable. No API review performed.',
+        );
+      try {
+        return await request(`https://api.github.com${path}`, playbookToken);
+      } catch {
+        // Never propagate request error text: it may contain credential material.
+        throw new PlaybookAccessError(
+          'Canonical Playbook inaccessible; verify PLAYBOOK_READ_TOKEN access and Contents: Read-only permission. No API review performed.',
+        );
+      }
+    },
+  };
+}
+
+export async function collect(event, get, git, getPlaybook) {
   if (!eligible(event)) throw new Error('Ineligible event');
   const id = identity(event);
   const root = `/repos/${event.repository.full_name}`;
@@ -180,10 +214,14 @@ export async function collect(event, get, git) {
     baselineInstructions[path] = git(['show', `${targetSha}:${path}`]);
     bounded({ contents, baselineInstructions });
   }
-  const playbookCommit = await get(
+  const playbookCommit = await getPlaybook(
     '/repos/Naiyi-Chia/naiyi-product-playbook/commits/HEAD',
   );
-  const playbook = await get(
+  if (!/^[a-f0-9]{40}$/.test(playbookCommit.sha))
+    throw new PlaybookAccessError(
+      'Canonical Playbook commit SHA unavailable; no API review performed.',
+    );
+  const playbook = await getPlaybook(
     `/repos/Naiyi-Chia/naiyi-product-playbook/contents/AI_PRODUCT_DEVELOPMENT_PLAYBOOK.md?ref=${playbookCommit.sha}`,
   );
   if (playbook.encoding !== 'base64')
@@ -364,51 +402,76 @@ export function render(id, model, result, runUrl) {
   return `${MARKER}\n${id.key ?? ''}\n\n## Automated Technical Review: ${result.result}\n\n- Issue: #${id.issue}\n- Branch: ${safe(id.branch ?? 'unresolved')}\n- Reviewed commit: ${safe(id.commit ?? 'unresolved')}\n- Integration target: ${safe(id.target ?? 'unresolved')} at ${safe(id.targetSha ?? 'unresolved')}\n- Model: ${safe(model)}\n- Run: ${runUrl}\n\n${safe(result.summary)}\n\n### Blocking findings\n${list(result.findings)}\n\n### Checks / evidence\n${list(result.checks)}\n\n### Limitations\n${list(result.limitations)}\n\nNext: ${result.result === 'PASS' ? 'Review complete; orchestration may prepare the Feature PR separately. Human Integration Approval remains required before dev integration.' : 'Engineering or Human must resolve the findings / missing evidence, then post a new handoff for a new commit.'}\nNo PR creation, implementation repair, merge, Issue closure, or Human approval performed.`;
 }
 
+export async function prepare(event, model, get, git, getPlaybook) {
+  const envelope = {
+    model,
+    id: { issue: event.issue.number },
+  };
+  try {
+    envelope.id = identity(event);
+    envelope.context = await collect(event, get, git, getPlaybook);
+    envelope.id.target = envelope.context.target;
+    envelope.id.targetSha = envelope.context.targetSha;
+  } catch (error) {
+    envelope.result = blocked(
+      error instanceof PlaybookAccessError
+        ? error.message
+        : 'Context collection failed: invalid/missing contract, stale head, API failure, unsupported file, or size budget. Inspect collector inputs and retry with a new handoff; no API review performed.',
+    );
+  }
+  return envelope;
+}
+
+export async function runReview(envelope, key, request = jsonRequest) {
+  const output = { ...envelope };
+  try {
+    output.result ??= await review(
+      envelope.context,
+      key,
+      envelope.model,
+      request,
+    );
+  } catch {
+    output.result = blocked(
+      'Reviewer API/key/timeout/refusal/structured-output failure; no valid Technical Review result obtained.',
+    );
+  }
+  if (Buffer.byteLength(JSON.stringify(output.result)) > MAX_RESPONSE)
+    throw new Error('Result exceeds budget');
+  return output;
+}
+
 async function main() {
   const mode = process.argv[2];
-  const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
   if (mode === 'collect') {
-    const envelope = {
-      model: process.env.REVIEW_MODEL || DEFAULT_MODEL,
-      id: { issue: event.issue.number },
-    };
-    try {
-      envelope.id = identity(event);
-      envelope.context = await collect(
-        event,
-        (path) =>
-          jsonRequest(`https://api.github.com${path}`, process.env.GH_TOKEN),
-        (args) =>
-          execFileSync('git', args, {
-            encoding: 'utf8',
-            maxBuffer: MAX_CONTEXT + 1,
-            stdio: ['ignore', 'pipe', 'pipe'],
-          }),
-      );
-      envelope.id.target = envelope.context.target;
-      envelope.id.targetSha = envelope.context.targetSha;
-    } catch {
-      envelope.result = blocked(
-        'Context collection failed: invalid/missing contract, stale head, API failure, unsupported file, or size budget. Inspect collector inputs and retry with a new handoff; no API review performed.',
-      );
-    }
+    const event = JSON.parse(
+      readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'),
+    );
+    const { get, getPlaybook } = githubReaders(
+      process.env.GH_TOKEN,
+      process.env.PLAYBOOK_READ_TOKEN,
+    );
+    const gitEnv = { ...process.env };
+    delete gitEnv.PLAYBOOK_READ_TOKEN;
+    delete gitEnv.GH_TOKEN;
+    const envelope = await prepare(
+      event,
+      process.env.REVIEW_MODEL || DEFAULT_MODEL,
+      get,
+      (args) =>
+        execFileSync('git', args, {
+          encoding: 'utf8',
+          maxBuffer: MAX_CONTEXT + 1,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: gitEnv,
+        }),
+      getPlaybook,
+    );
     writeFileSync('review-envelope.json', JSON.stringify(envelope));
   } else if (mode === 'review') {
     const envelope = JSON.parse(readFileSync('review-envelope.json', 'utf8'));
-    try {
-      envelope.result ??= await review(
-        envelope.context,
-        process.env.OPENAI_API_KEY,
-        envelope.model,
-      );
-    } catch {
-      envelope.result = blocked(
-        'Reviewer API/key/timeout/refusal/structured-output failure; no valid Technical Review result obtained.',
-      );
-    }
-    if (Buffer.byteLength(JSON.stringify(envelope.result)) > MAX_RESPONSE)
-      throw new Error('Result exceeds budget');
-    writeFileSync('review-result.json', JSON.stringify(envelope));
+    const output = await runReview(envelope, process.env.OPENAI_API_KEY);
+    writeFileSync('review-result.json', JSON.stringify(output));
   } else throw new Error('Expected collect or review');
 }
 
