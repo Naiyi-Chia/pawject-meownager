@@ -11,6 +11,9 @@ import {
   bounded,
   workflowSections,
   collect,
+  githubReaders,
+  prepare,
+  runReview,
   review,
   validate,
   parseResponse,
@@ -159,7 +162,7 @@ function fixture(options = {}) {
 
 test('deterministic collector includes actual diff, nested instructions, docs, baseline, CI and pinned Playbook', async () => {
   const f = fixture();
-  const context = await collect(event(), f.get, f.git);
+  const context = await collect(event(), f.get, f.git, f.get);
   assert.equal(context.commit, sha);
   assert.equal(context.targetSha, targetSha);
   assert.match(context.diff, /actual implementation/);
@@ -167,7 +170,7 @@ test('deterministic collector includes actual diff, nested instructions, docs, b
   assert.ok(context.contents['docs/MVP_SCOPE.md']);
   assert.equal(context.checks[0].conclusion, 'success');
   assert.equal(context.playbookSha, targetSha);
-  assert.deepEqual(context, await collect(event(), f.get, f.git));
+  assert.deepEqual(context, await collect(event(), f.get, f.git, f.get));
   assert.ok(
     f.commands.every(
       (args) => !['checkout', 'switch', 'commit', 'push'].includes(args[0]),
@@ -186,7 +189,7 @@ test('missing/edited/stale/oversized/binary/nonregular evidence blocks collectio
     { checkCount: 101 },
   ]) {
     const f = fixture(options);
-    await assert.rejects(collect(event(), f.get, f.git));
+    await assert.rejects(collect(event(), f.get, f.git, f.get));
   }
   const f = fixture();
   await assert.rejects(
@@ -196,6 +199,7 @@ test('missing/edited/stale/oversized/binary/nonregular evidence blocks collectio
         throw new Error('API unavailable');
       },
       f.git,
+      f.get,
     ),
   );
 });
@@ -244,7 +248,7 @@ test('strict local validation cannot interpret malformed, refused or truncated o
 
 test('Responses request is fresh, structured, bounded, and carries no GitHub credentials/tools', async () => {
   const f = fixture();
-  const context = await collect(event(), f.get, f.git);
+  const context = await collect(event(), f.get, f.git, f.get);
   await review(
     context,
     'fake-api-key',
@@ -317,11 +321,248 @@ test('workflow preserves credential separation and default-branch execution', ()
   assert.match(reviewer, /permissions: \{\}/);
   assert.ok(!reviewer.includes('github.token'));
   assert.ok(!reviewer.includes('checkout'));
+  assert.ok(!reviewer.includes('PLAYBOOK_READ_TOKEN'));
+  assert.match(reviewer, /OPENAI_API_KEY: \$\{\{ secrets.OPENAI_API_KEY \}\}/);
   const report = yaml.split('\n  report:')[1];
   assert.ok(!report.includes('OPENAI_API_KEY'));
+  assert.ok(!report.includes('PLAYBOOK_READ_TOKEN'));
+  const collector = yaml.split('\n  collect:')[1].split('\n  claim:')[0];
+  assert.match(
+    collector,
+    /PLAYBOOK_READ_TOKEN: \$\{\{ secrets.PLAYBOOK_READ_TOKEN \}\}/,
+  );
+  assert.equal(yaml.match(/secrets.PLAYBOOK_READ_TOKEN/g).length, 1);
   assert.ok(!yaml.includes('pull_request_target'));
   assert.match(yaml, /cancel-in-progress: false\n {2}queue: max/);
   assert.match(yaml, /group: technical-review-.*github.event.sender.login/);
+});
+
+test('collector routes exactly two pinned Playbook reads to the dedicated credential and keeps Pawject reads separate', async () => {
+  const f = fixture();
+  const calls = [];
+  const readers = githubReaders(
+    'repo-token-sentinel',
+    'playbook-token-sentinel',
+    async (url, token) => {
+      calls.push({ url, token });
+      return f.get(new URL(url).pathname + new URL(url).search);
+    },
+  );
+  const envelope = await prepare(
+    event(),
+    'model',
+    readers.get,
+    f.git,
+    readers.getPlaybook,
+  );
+  assert.equal(envelope.result, undefined);
+  const playbookCalls = calls.filter(
+    (call) => call.token === 'playbook-token-sentinel',
+  );
+  assert.deepEqual(
+    playbookCalls.map((call) => call.url),
+    [
+      'https://api.github.com/repos/Naiyi-Chia/naiyi-product-playbook/commits/HEAD',
+      `https://api.github.com/repos/Naiyi-Chia/naiyi-product-playbook/contents/AI_PRODUCT_DEVELOPMENT_PLAYBOOK.md?ref=${targetSha}`,
+    ],
+  );
+  assert.ok(
+    calls
+      .filter((call) => call.token === 'repo-token-sentinel')
+      .every((call) =>
+        call.url.startsWith(
+          'https://api.github.com/repos/Naiyi-Chia/pawject-meownager/',
+        ),
+      ),
+  );
+  const serialized = JSON.stringify(envelope);
+  assert.ok(!serialized.includes('repo-token-sentinel'));
+  assert.ok(!serialized.includes('playbook-token-sentinel'));
+  await runReview(envelope, 'fake-openai-key', async (url, key, options) => {
+    assert.equal(key, 'fake-openai-key');
+    assert.ok(!options.body.includes('playbook-token-sentinel'));
+    assert.ok(!options.body.includes('repo-token-sentinel'));
+    return response();
+  });
+});
+
+test('dedicated credential cannot be used for arbitrary repositories, endpoints, unpinned refs or writes', async () => {
+  let calls = 0;
+  const readers = githubReaders('repo', 'private', async () => {
+    calls++;
+  });
+  for (const path of [
+    '/repos/Naiyi-Chia/pawject-meownager/issues/22',
+    '/repos/outsider/naiyi-product-playbook/commits/HEAD',
+    '/repos/Naiyi-Chia/naiyi-product-playbook/issues/1',
+    '/repos/Naiyi-Chia/naiyi-product-playbook/contents/other.md',
+    '/repos/Naiyi-Chia/naiyi-product-playbook/contents/AI_PRODUCT_DEVELOPMENT_PLAYBOOK.md?ref=main',
+    `/repos/Naiyi-Chia/naiyi-product-playbook/contents/AI_PRODUCT_DEVELOPMENT_PLAYBOOK.md?ref=${targetSha}&extra=1`,
+  ])
+    await assert.rejects(readers.getPlaybook(path));
+  assert.throws(() =>
+    readers.get('/repos/Naiyi-Chia/naiyi-product-playbook/commits/HEAD'),
+  );
+  assert.equal(calls, 0);
+});
+
+test('missing Playbook credential blocks durably without fallback or OpenAI invocation', async () => {
+  for (const token of [undefined, '', '   ']) {
+    const f = fixture();
+    const readers = githubReaders(
+      'repo-token-sentinel',
+      token,
+      async (url, usedToken) => {
+        assert.equal(usedToken, 'repo-token-sentinel');
+        assert.ok(!url.includes('naiyi-product-playbook'));
+        return f.get(new URL(url).pathname + new URL(url).search);
+      },
+    );
+    const envelope = await prepare(
+      event(),
+      'model',
+      readers.get,
+      f.git,
+      readers.getPlaybook,
+    );
+    assert.equal(envelope.context, undefined);
+    assert.equal(envelope.result.result, 'BLOCKED');
+    assert.match(
+      envelope.result.limitations[0],
+      /PLAYBOOK_READ_TOKEN is not configured/,
+    );
+    const output = await runReview(envelope, 'key', async () =>
+      assert.fail('OpenAI must not be called'),
+    );
+    assert.match(
+      render(output.id, output.model, output.result, 'run'),
+      /Technical Review: BLOCKED/,
+    );
+    assert.ok(!JSON.stringify(output).includes('repo-token-sentinel'));
+    const [claim, report] = workflowScripts();
+    const harness = workflowHarness({
+      'review-envelope.json': envelope,
+      'review-result.json': output,
+    });
+    await harness.run(claim);
+    await harness.run(report, { CLAIM_COMMENT: harness.outputs.comment });
+    assert.match(harness.comments[0].body, /Technical Review: BLOCKED/);
+  }
+});
+
+test('actual HTTP transport sends separate Bearer credentials with GET and sanitizes unauthorized responses', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  let status = 200;
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, options });
+    return {
+      ok: status === 200,
+      status,
+      text: async () => JSON.stringify({ sha: targetSha }),
+    };
+  };
+  try {
+    const readers = githubReaders(
+      'repo-token-sentinel',
+      'private-token-sentinel',
+    );
+    await readers.get('/repos/Naiyi-Chia/pawject-meownager/issues/22');
+    await readers.getPlaybook(
+      '/repos/Naiyi-Chia/naiyi-product-playbook/commits/HEAD',
+    );
+    assert.equal(
+      calls[0].options.headers.Authorization,
+      'Bearer repo-token-sentinel',
+    );
+    assert.equal(
+      calls[1].options.headers.Authorization,
+      'Bearer private-token-sentinel',
+    );
+    assert.ok(calls.every((call) => (call.options.method ?? 'GET') === 'GET'));
+    for (status of [401, 403, 404]) {
+      await assert.rejects(
+        readers.getPlaybook(
+          '/repos/Naiyi-Chia/naiyi-product-playbook/commits/HEAD',
+        ),
+        (error) =>
+          error.message.includes('Canonical Playbook inaccessible') &&
+          !error.message.includes('private-token-sentinel'),
+      );
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('unauthorized or inaccessible Playbook reads suppress raw credential-bearing errors and block before OpenAI', async () => {
+  for (const failingRead of [
+    'commits/HEAD',
+    'contents/AI_PRODUCT_DEVELOPMENT_PLAYBOOK.md',
+  ]) {
+    const f = fixture();
+    const readers = githubReaders(
+      'repo-token-sentinel',
+      'private-token-sentinel',
+      async (url, token) => {
+        if (url.includes(failingRead))
+          throw new Error(`HTTP 401/403/404; Authorization: ${token}`);
+        return f.get(new URL(url).pathname + new URL(url).search);
+      },
+    );
+    const envelope = await prepare(
+      event(),
+      'model',
+      readers.get,
+      f.git,
+      readers.getPlaybook,
+    );
+    assert.equal(envelope.context, undefined);
+    assert.equal(envelope.result.result, 'BLOCKED');
+    assert.match(
+      envelope.result.limitations[0],
+      /Canonical Playbook inaccessible/,
+    );
+    const output = await runReview(envelope, 'key', async () =>
+      assert.fail('OpenAI must not be called'),
+    );
+    const serialized = JSON.stringify(output);
+    assert.ok(!serialized.includes('private-token-sentinel'));
+    assert.ok(!serialized.includes('repo-token-sentinel'));
+    const [claim, report] = workflowScripts();
+    const harness = workflowHarness({
+      'review-envelope.json': envelope,
+      'review-result.json': output,
+    });
+    await harness.run(claim);
+    await harness.run(report, { CLAIM_COMMENT: harness.outputs.comment });
+    assert.match(harness.comments[0].body, /Technical Review: BLOCKED/);
+    assert.ok(!harness.comments[0].body.includes('private-token-sentinel'));
+  }
+});
+
+test('invalid canonical commit cannot redirect the dedicated credential to another path', async () => {
+  const f = fixture();
+  let privateCalls = 0;
+  const readers = githubReaders('repo', 'private', async (url, token) => {
+    if (token === 'private') {
+      privateCalls++;
+      return { sha: 'main&redirect=attacker' };
+    }
+    return f.get(new URL(url).pathname + new URL(url).search);
+  });
+  const envelope = await prepare(
+    event(),
+    'model',
+    readers.get,
+    f.git,
+    readers.getPlaybook,
+  );
+  assert.equal(envelope.result.result, 'BLOCKED');
+  assert.equal(privateCalls, 1);
+  await runReview(envelope, 'key', async () =>
+    assert.fail('OpenAI must not be called'),
+  );
 });
 
 function workflowScripts() {

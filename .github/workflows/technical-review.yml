@@ -45,6 +45,7 @@ jobs:
       - name: Collect authoritative context
         env:
           GH_TOKEN: ${{ github.token }}
+          PLAYBOOK_READ_TOKEN: ${{ secrets.PLAYBOOK_READ_TOKEN }}
         run: node scripts/technical-review.mjs collect
       - uses: actions/upload-artifact@v4
         with:
